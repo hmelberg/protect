@@ -14,11 +14,12 @@ from typing import Any, Callable, Iterable, Sequence
 import numpy as np
 import pandas as pd
 
-# Group A exports only TransformLog. Verbs (noise, jitter, winsorize, bin,
-# year, month, diff, shorten, collapse, pseudonymize, insert, eliminate, swap,
-# suppress, risk, RiskReport, protect, profile) are forthcoming in later groups.
+# Group A exports TransformLog; Group B adds noise + jitter. Other verbs
+# (winsorize, bin, year, month, diff, shorten, collapse, pseudonymize, insert,
+# eliminate, swap, suppress, risk, RiskReport, protect, profile) are forthcoming.
 __all__ = [
     "TransformLog",
+    "noise",
 ]
 
 
@@ -171,6 +172,149 @@ def _check_unit_invariant(
 # ============================================================================
 # Value-level verbs
 # ============================================================================
+
+
+def noise(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    scale: float | str = "auto",
+    method: str = "gaussian",
+    share: float = 1.0,
+    direction: str = "both",
+    clip: tuple[float, float] | None = None,
+    by: str | None = None,
+    unit_id: str | None = None,
+    random_state: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Add noise to numeric columns.
+
+    Parameters
+    ----------
+    data : DataFrame
+    columns : str | list of str
+        Numeric column(s) to perturb.
+    scale : float | 'auto', default 'auto'
+        SD (gaussian/laplace), spread (uniform), max step (discrete), proportion
+        (multiplicative), or integer group size (group_mean). With 'auto',
+        scale is 0.05 x column_std per column (or 3 for discrete, 0.05 for
+        multiplicative, 3 for group_mean group-size).
+    method : {'gaussian', 'laplace', 'uniform', 'discrete', 'multiplicative', 'group_mean'}
+    share : float in [0, 1], default 1.0
+        Fraction of units (or rows when unit_id is None) to perturb.
+    direction : {'both', 'up', 'down'}, default 'both'
+        Asymmetric noise; clipped to non-negative or non-positive when not 'both'.
+    clip : (lo, hi) | None
+        Post-noise clipping.
+    by : str | None
+        Grouping for method='group_mean' (sort within group before grouping
+        into k-tuples).
+    unit_id : str | None
+        When set, noise is drawn once per unit and broadcast.
+    random_state : int | Generator | None
+
+    Returns
+    -------
+    DataFrame
+        Copy of `data` with perturbed columns.
+    """
+    rng = _resolve_random_state(random_state)
+    columns = _validate_columns(data, columns)
+    out = data.copy()
+
+    if method == "group_mean":
+        k = 3 if scale == "auto" else int(scale)
+        for col in columns:
+            out[col] = _noise_group_mean(out, col, k, by=by)
+        return out
+
+    select_mask = _select_share(data, share, unit_id, rng)
+    n_total = len(data)
+
+    # When share=0 nothing is selected; return the copy untouched so dtypes
+    # are preserved (important for integer columns).
+    if not select_mask.any():
+        return out
+
+    for col in columns:
+        col_scale = _resolve_noise_scale(out[col], scale, method)
+
+        if unit_id is not None:
+            unit_noise = _apply_per_unit(
+                data, unit_id, lambda _u, _s=col_scale: _draw_noise(rng, method, _s, 1)[0]
+            )
+            noise_arr = unit_noise.values
+        else:
+            noise_arr = _draw_noise(rng, method, col_scale, n_total)
+
+        if direction == "up":
+            noise_arr = np.abs(noise_arr)
+        elif direction == "down":
+            noise_arr = -np.abs(noise_arr)
+
+        noise_arr = np.where(select_mask.values, noise_arr, 0)
+
+        if method == "multiplicative":
+            new = out[col].values * (1 + noise_arr)
+        else:
+            new = out[col].values + noise_arr
+
+        if clip is not None:
+            new = np.clip(new, clip[0], clip[1])
+
+        out[col] = new
+
+    return out
+
+
+def _resolve_noise_scale(series: pd.Series, scale, method: str) -> float:
+    """Compute the effective scale, handling 'auto'."""
+    if scale != "auto":
+        return float(scale)
+    if method == "multiplicative":
+        return 0.05
+    if method == "discrete":
+        return 3.0
+    sd = float(series.std())
+    if sd == 0 or np.isnan(sd):
+        return 1.0
+    return 0.05 * sd
+
+
+def _draw_noise(rng: np.random.Generator, method: str, scale: float, n: int) -> np.ndarray:
+    """Draw an array of noise samples by method."""
+    if method == "gaussian":
+        return rng.normal(0, scale, size=n)
+    if method == "laplace":
+        return rng.laplace(0, scale, size=n)
+    if method == "uniform":
+        return rng.uniform(-scale, scale, size=n)
+    if method == "discrete":
+        s = int(scale)
+        return rng.integers(-s, s + 1, size=n).astype(float)
+    if method == "multiplicative":
+        return rng.normal(0, scale, size=n)
+    raise ValueError(f"Unknown noise method: {method!r}")
+
+
+def _noise_group_mean(data: pd.DataFrame, col: str, k: int, by: str | None) -> pd.Series:
+    """Microaggregation: sort within `by` (or globally), group into k-tuples,
+    replace each value with group mean. Returns Series aligned to data.index.
+    """
+    if k < 2:
+        return data[col]
+
+    def _agg(s: pd.Series) -> pd.Series:
+        sorted_idx = s.sort_values().index
+        result = s.copy()
+        for start in range(0, len(sorted_idx), k):
+            group = sorted_idx[start:start + k]
+            result.loc[group] = s.loc[group].mean()
+        return result
+
+    if by is None:
+        return _agg(data[col])
+    return data.groupby(by, group_keys=False)[col].apply(_agg)
 
 
 # ============================================================================

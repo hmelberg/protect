@@ -107,3 +107,65 @@ class TestHelpers:
         for pid, grp in small_df.groupby("pid"):
             vals = result[grp.index]
             assert vals.nunique() == 1
+
+
+# ============================================================================
+# noise
+# ============================================================================
+
+
+class TestNoise:
+    def test_auto_scale_works_without_explicit_scale(self, small_df):
+        out = p.noise(small_df, "income", random_state=42)
+        assert not (out["income"] == small_df["income"]).all()
+
+    def test_gaussian_changes_values(self, small_df):
+        out = p.noise(small_df, "income", scale=1000, random_state=42)
+        assert not (out["income"] == small_df["income"]).all()
+
+    def test_does_not_mutate_input(self, small_df):
+        original = small_df["income"].copy()
+        p.noise(small_df, "income", scale=1000, random_state=42)
+        pd.testing.assert_series_equal(small_df["income"], original)
+
+    def test_reproducible(self, small_df):
+        out1 = p.noise(small_df, "income", scale=1000, random_state=42)
+        out2 = p.noise(small_df, "income", scale=1000, random_state=42)
+        pd.testing.assert_frame_equal(out1, out2)
+
+    def test_share_zero_is_no_op(self, small_df):
+        out = p.noise(small_df, "income", scale=1000, share=0.0, random_state=42)
+        pd.testing.assert_series_equal(out["income"], small_df["income"])
+
+    def test_unit_id_consistency(self, small_df):
+        out = p.noise(small_df, "income", scale=1000, unit_id="pid", random_state=42)
+        for pid, grp in out.groupby("pid"):
+            assert grp["income"].nunique() == 1
+
+    def test_discrete_method_produces_integer_steps(self, small_df):
+        out = p.noise(small_df, "income", scale=3, method="discrete", random_state=42)
+        diffs = (out["income"] - small_df["income"]).dropna()
+        assert (diffs == diffs.astype(int)).all()
+        assert diffs.abs().max() <= 3
+
+    def test_multiplicative_method(self, small_df):
+        out = p.noise(small_df, "income", scale=0.1, method="multiplicative", random_state=42)
+        ratio = out["income"] / small_df["income"]
+        assert ratio.between(0.5, 1.5).all()
+
+    def test_group_mean_replaces_with_group_mean(self, small_df):
+        out = p.noise(small_df, "income", scale=5, method="group_mean")
+        assert out["income"].nunique() <= small_df["income"].nunique()
+
+    def test_direction_up_only_increases(self, small_df):
+        out = p.noise(small_df, "income", scale=1000, direction="up", random_state=42)
+        diffs = out["income"] - small_df["income"]
+        assert (diffs >= 0).all()
+
+    def test_clip_bounds_output(self, small_df):
+        out = p.noise(small_df, "income", scale=100000, clip=(0, 200000), random_state=42)
+        assert out["income"].between(0, 200000).all()
+
+    def test_raises_on_missing_column(self, small_df):
+        with pytest.raises(KeyError):
+            p.noise(small_df, "nonexistent", scale=1.0)
