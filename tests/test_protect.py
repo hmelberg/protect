@@ -582,3 +582,39 @@ class TestSuppressTable:
         out = p.suppress(tab, dominance=(1, 0.7), contributions=contributions)
         assert pd.isna(out.loc["X", "value"])
         assert out.loc["Y", "value"] == 500
+
+
+# ============================================================================
+# suppress (regression + plot)
+# ============================================================================
+
+
+class TestSuppressRegression:
+    def test_widen_alpha(self):
+        sm = pytest.importorskip("statsmodels.api")
+        X = sm.add_constant(np.arange(100, dtype=float))
+        y = 2 * X[:, 1] + np.random.default_rng(42).normal(0, 1, 100)
+        result = sm.OLS(y, X).fit()
+        out = p.suppress(result, widen_alpha=0.01)
+        ci99 = np.asarray(result.conf_int(alpha=0.01))
+        new_ci = np.asarray(out.conf_int())
+        np.testing.assert_allclose(new_ci, ci99, rtol=1e-6)
+
+    def test_redact_intercept_below_threshold(self):
+        sm = pytest.importorskip("statsmodels.api")
+        X = sm.add_constant(np.arange(20, dtype=float))
+        y = 2 * X[:, 1] + np.random.default_rng(42).normal(0, 1, 20)
+        result = sm.OLS(y, X).fit()
+        out = p.suppress(result, redact_intercept=5, group_counts={"const": 3})
+        assert np.isnan(out.params["const"]) or out.params["const"] is None
+
+
+class TestSuppressPlot:
+    def test_hexbin_suppresses_sparse(self):
+        rng = np.random.default_rng(42)
+        x = rng.normal(0, 1, 1000)
+        y = rng.normal(0, 1, 1000)
+        result = p.suppress((x, y), hexbin=True, gridsize=20, min_count=10)
+        assert "x_centers" in result
+        assert "y_centers" in result
+        assert "counts" in result

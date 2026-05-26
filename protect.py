@@ -1377,11 +1377,20 @@ def _suppress_regression(
     we need (params, conf_int).
     """
     import types
-    params = result.params.copy()
+    raw_params = result.params
+    params = raw_params.copy()
     if widen_alpha is not None:
         ci = result.conf_int(alpha=widen_alpha)
     else:
         ci = result.conf_int()
+    # statsmodels returns plain ndarrays when fit on raw numpy arrays; convert
+    # to pandas so we have a uniform name-based API. Use "const" for the
+    # intercept (statsmodels add_constant convention) and x1, x2, ... otherwise.
+    if not hasattr(params, "index"):
+        names = ["const"] + [f"x{i}" for i in range(1, len(params))]
+        params = pd.Series(params, index=names)
+    if not hasattr(ci, "loc"):
+        ci = pd.DataFrame(ci, index=params.index, columns=[0, 1])
 
     if redact_intercept is not None and group_counts is not None:
         smallest = min(group_counts.values())
