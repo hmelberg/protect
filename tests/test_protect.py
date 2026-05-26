@@ -336,3 +336,28 @@ class TestDiff:
     def test_diff_requires_unit_id_for_per_unit_ref(self, panel_df):
         with pytest.raises(ValueError, match="unit_id"):
             p.diff(panel_df, "visit", ref="first_per_unit")
+
+
+# ============================================================================
+# shorten
+# ============================================================================
+
+
+class TestShorten:
+    def test_keep_n_characters(self, panel_df):
+        out = p.shorten(panel_df, "zip", keep=3)
+        assert out["zip"].str.len().max() <= 3
+
+    def test_sep_truncates_at_separator(self, panel_df):
+        out = p.shorten(panel_df, "icd", sep=".")
+        for val in out["icd"].unique():
+            assert "." not in val
+
+    def test_min_count_cascades(self, panel_df):
+        out = p.shorten(panel_df, "icd", sep=".", min_count=5)
+        counts = out["icd"].value_counts()
+        assert len(counts) > 0
+
+    def test_per_value_rules(self, panel_df):
+        out = p.shorten(panel_df, "icd", keep=1, per_value={"I10": "keep_full"})
+        assert len(out) == len(panel_df)

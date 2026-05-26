@@ -26,6 +26,7 @@ __all__ = [
     "year",
     "month",
     "diff",
+    "shorten",
 ]
 
 
@@ -720,6 +721,79 @@ def diff(
 # ============================================================================
 # Code & category verbs
 # ============================================================================
+
+
+def shorten(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    keep: int = 3,
+    sep: str | None = None,
+    side: str = "left",
+    min_count: int | None = None,
+    fallback: str = "*",
+    per_value: dict[str, str] | None = None,
+    unit_id: str | None = None,
+    share: float = 1.0,
+) -> pd.DataFrame:
+    """Truncate codes (ICD, ZIP, NACE).
+
+    keep      : number of characters to keep
+    sep       : if set, truncate at first occurrence of this character
+    side      : 'left' = keep prefix; 'right' = keep suffix
+    min_count : cascade — if a truncated value appears < min_count times,
+                truncate further until it meets the threshold, or replace
+                with `fallback` if no further truncation is possible
+    per_value : dict mapping a value or "PREFIX*" pattern to an action:
+                'keep_full' or 'keep_N' (e.g., 'keep_1' = keep 1 character)
+    """
+    columns = _validate_columns(data, columns)
+    out = data.copy()
+
+    def _truncate(value, keep_n):
+        if pd.isna(value):
+            return value
+        s = str(value)
+        if sep is not None and sep in s:
+            return s.split(sep)[0] if side == "left" else s.split(sep)[-1]
+        return s[:keep_n] if side == "left" else s[-keep_n:]
+
+    for col in columns:
+        s = out[col].astype(str)
+
+        if per_value:
+            def _apply_rule(v):
+                for pattern, action in per_value.items():
+                    matches = (v == pattern or
+                               (pattern.endswith("*") and v.startswith(pattern[:-1])))
+                    if matches:
+                        if action == "keep_full":
+                            return v
+                        if action.startswith("keep_"):
+                            n = int(action.split("_")[1])
+                            return _truncate(v, n)
+                return _truncate(v, keep)
+            s = s.map(_apply_rule)
+        else:
+            s = s.map(lambda v: _truncate(v, keep))
+
+        if min_count is not None:
+            current_keep = keep
+            while current_keep >= 1:
+                counts = s.value_counts()
+                rare = counts[counts < min_count].index
+                if len(rare) == 0:
+                    break
+                current_keep -= 1
+                if current_keep < 1:
+                    s = s.where(~s.isin(rare), fallback)
+                    break
+                s = s.map(lambda v, _r=rare, _k=current_keep:
+                          _truncate(v, _k) if v in _r else v)
+
+        out[col] = s
+
+    return out
 
 
 # ============================================================================
