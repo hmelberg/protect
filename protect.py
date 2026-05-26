@@ -14,9 +14,9 @@ from typing import Any, Callable, Iterable, Sequence
 import numpy as np
 import pandas as pd
 
-# Group A exports TransformLog; Group B adds noise + jitter. Other verbs
-# (winsorize, bin, year, month, diff, shorten, collapse, pseudonymize, insert,
-# eliminate, swap, suppress, risk, RiskReport, protect, profile) are forthcoming.
+# Group A exports TransformLog; Group B adds noise + jitter. The recipe-driver
+# `protect` verb is exported by Group I; remaining meta verb (`profile`) lands
+# in a follow-up commit.
 __all__ = [
     "TransformLog",
     "noise",
@@ -35,6 +35,7 @@ __all__ = [
     "suppress",
     "risk",
     "RiskReport",
+    "protect",
 ]
 
 
@@ -1569,6 +1570,101 @@ def risk(
 # ============================================================================
 
 
+def protect(
+    data: pd.DataFrame,
+    *,
+    recipe: dict,
+    unit_id: str | None = None,
+    audit: bool = True,
+) -> tuple[pd.DataFrame, "TransformLog"]:
+    """Apply many verbs in declared order via a recipe dict.
+
+    A recipe maps column → step (or list of steps). Each step is a single-key
+    dict mapping verb-name → params:
+
+        recipe = {
+            "income":    {"winsorize": {"limits": (0.01, 0.99)}},
+            "icd":       {"shorten": {"sep": "."}},
+            "cost":      [{"winsorize": {...}}, {"noise": {...}}],
+        }
+
+    Returns (df, TransformLog).
+    """
+    out = data.copy()
+    log = TransformLog()
+
+    # column-targeted verbs (take columns as first positional arg)
+    _verb_registry = {
+        "noise": noise,
+        "jitter": jitter,
+        "winsorize": winsorize,
+        "bin": bin,
+        "year": year,
+        "month": month,
+        "diff": diff,
+        "shorten": shorten,
+        "collapse": collapse,
+        "pseudonymize": pseudonymize,
+        "swap": swap,
+    }
+    # whole-frame verbs (no column arg)
+    _frame_verbs = {
+        "insert": insert,
+        "eliminate": eliminate,
+    }
+
+    for col, ops in recipe.items():
+        steps = ops if isinstance(ops, list) else [ops]
+        for step in steps:
+            if len(step) != 1:
+                raise ValueError(f"Each step must have one verb, got {step}")
+            verb_name, params = next(iter(step.items()))
+            params = dict(params)
+
+            # auto-inject unit_id when the call doesn't specify one
+            if unit_id is not None and "unit_id" not in params:
+                params["unit_id"] = unit_id
+
+            if verb_name in _verb_registry:
+                fn = _verb_registry[verb_name]
+                if verb_name == "pseudonymize":
+                    result = fn(out, col, **params)
+                    if isinstance(result, tuple):
+                        out, _key = result
+                    else:
+                        out = result
+                else:
+                    out = fn(out, col, **params)
+            elif verb_name in _frame_verbs:
+                out = _frame_verbs[verb_name](out, **params)
+            else:
+                raise ValueError(f"Unknown verb in recipe: {verb_name!r}")
+
+            log.add(
+                function=verb_name,
+                columns=[col],
+                params={k: v for k, v in params.items() if k != "unit_id"},
+                rows_affected=len(out),
+                units_affected=out[unit_id].nunique() if unit_id and unit_id in out.columns else None,
+            )
+
+    if audit:
+        return out, log
+    return out
+
+
 # ============================================================================
 # Profile implementations
 # ============================================================================
+
+
+# Expose private helpers as attributes on `protect` so that, after the package
+# does `from .protect import *`, callers (and tests) can still reach the
+# internal building blocks via `protect.protect._resolve_random_state`. The
+# star-import shadows the submodule, so attaching helpers to the function
+# preserves both the callable surface and the helper-introspection surface.
+protect._resolve_random_state = _resolve_random_state
+protect._validate_columns = _validate_columns
+protect._select_share = _select_share
+protect._apply_per_unit = _apply_per_unit
+protect._check_unit_invariant = _check_unit_invariant

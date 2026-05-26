@@ -656,3 +656,42 @@ class TestRisk:
         r2 = p.risk(df2, quasi_ids=["sex", "zip"], unit_id="pid")
         d = r1.diff(r2)
         assert "k_min" in d
+
+
+# ============================================================================
+# protect (recipe)
+# ============================================================================
+
+
+class TestProtect:
+    def test_recipe_with_single_verbs(self, panel_df):
+        recipe = {
+            "income": {"winsorize": {"limits": (0.05, 0.95)}},
+            "icd": {"shorten": {"sep": "."}},
+            "country": {"collapse": {"rare_below": 5}},
+        }
+        df_out, log = p.protect(panel_df, recipe=recipe)
+        assert isinstance(df_out, pd.DataFrame)
+        assert isinstance(log, p.TransformLog)
+        assert len(log) == 3
+
+    def test_recipe_with_list_of_steps(self, panel_df):
+        recipe = {
+            "cost": [
+                {"winsorize": {"limits": (0.05, 0.95)}},
+                {"noise": {"scale": 50, "random_state": 42}},
+            ],
+        }
+        df_out, log = p.protect(panel_df, recipe=recipe)
+        assert len(log) == 2
+
+    def test_protect_does_not_mutate_input(self, panel_df):
+        original = panel_df["income"].copy()
+        p.protect(panel_df, recipe={"income": {"winsorize": {"limits": (0.1, 0.9)}}})
+        pd.testing.assert_series_equal(panel_df["income"], original)
+
+    def test_unit_id_propagated_to_verbs(self, panel_df):
+        recipe = {"income": {"noise": {"scale": 1000, "random_state": 42}}}
+        df_out, _ = p.protect(panel_df, recipe=recipe, unit_id="pid")
+        for pid, grp in df_out.groupby("pid"):
+            assert grp["income"].nunique() == 1
