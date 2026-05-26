@@ -29,12 +29,18 @@ __all__ = [
 
 @dataclass
 class TransformLog:
-    """Audit trail for protection operations."""
+    """Audit trail for protection operations.
+
+    Returned by `protect()` and optionally by individual verbs with `audit=True`.
+    Designed as documentation for HIPAA Expert Determination, GDPR records,
+    and microdata.no method reporting.
+    """
     entries: list[dict] = field(default_factory=list)
 
     def add(self, *, function: str, columns: Sequence[str] | None = None,
             params: dict | None = None, rows_affected: int | None = None,
             units_affected: int | None = None, notes: str | None = None) -> None:
+        """Append an operation entry with timestamp and audit metadata."""
         self.entries.append({
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "function": function,
@@ -46,6 +52,7 @@ class TransformLog:
         })
 
     def to_text(self) -> str:
+        """Return a human-readable text rendering of all entries."""
         lines = []
         for i, e in enumerate(self.entries, 1):
             cols = ", ".join(e["columns"]) if e["columns"] else "-"
@@ -59,9 +66,11 @@ class TransformLog:
         return "\n".join(lines) if lines else "(empty log)"
 
     def to_json(self) -> str:
+        """Return all entries as a JSON string."""
         return json.dumps({"entries": self.entries}, default=str, indent=2)
 
     def summary(self) -> dict:
+        """Return aggregate counts: total operations and operations per function."""
         by_function: dict[str, int] = {}
         for e in self.entries:
             by_function[e["function"]] = by_function.get(e["function"], 0) + 1
@@ -80,12 +89,14 @@ class TransformLog:
 
 
 def _resolve_random_state(random_state: int | np.random.Generator | None) -> np.random.Generator:
+    """Convert int seed / Generator / None to a Generator."""
     if isinstance(random_state, np.random.Generator):
         return random_state
     return np.random.default_rng(random_state)
 
 
 def _validate_columns(data: pd.DataFrame, columns: str | Sequence[str]) -> list[str]:
+    """Normalize columns argument to a list and verify each is in `data`."""
     if isinstance(columns, str):
         columns = [columns]
     columns = list(columns)
@@ -101,6 +112,11 @@ def _select_share(
     unit_id: str | None,
     rng: np.random.Generator,
 ) -> pd.Series:
+    """Boolean mask aligned to `data.index` selecting `share` of units (or rows).
+
+    If `unit_id` is given, selection is at unit granularity: a whole unit's
+    rows are all True or all False. Otherwise, rows are selected independently.
+    """
     if share <= 0:
         return pd.Series(False, index=data.index)
     if share >= 1:
@@ -125,6 +141,11 @@ def _apply_per_unit(
     unit_id: str,
     fn: Callable[[Any], Any],
 ) -> pd.Series:
+    """Apply `fn` once per unit, broadcast to all rows of that unit.
+
+    `fn` is called with the unit's id and returns a scalar; the result is
+    indexed back to `data.index`.
+    """
     units = data[unit_id].unique()
     draws = {u: fn(u) for u in units}
     return data[unit_id].map(draws)
@@ -135,6 +156,7 @@ def _check_unit_invariant(
     columns: Sequence[str],
     unit_id: str,
 ) -> None:
+    """Warn if any declared invariant column varies within `unit_id`."""
     for col in columns:
         n_distinct = data.groupby(unit_id)[col].nunique()
         violating = n_distinct[n_distinct > 1]
