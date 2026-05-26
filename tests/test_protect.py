@@ -361,3 +361,38 @@ class TestShorten:
     def test_per_value_rules(self, panel_df):
         out = p.shorten(panel_df, "icd", keep=1, per_value={"I10": "keep_full"})
         assert len(out) == len(panel_df)
+
+
+# ============================================================================
+# collapse
+# ============================================================================
+
+
+class TestCollapse:
+    def test_mapping_mode(self, panel_df):
+        out = p.collapse(panel_df, "country", mapping={"LI": "Other Europe", "AD": "Other Europe"})
+        assert "Other Europe" in out["country"].values
+
+    def test_rare_below_collapses_rare(self, panel_df):
+        out = p.collapse(panel_df, "country", rare_below=5)
+        counts = out["country"].value_counts()
+        real_values = counts.drop("Other", errors="ignore")
+        assert (real_values >= 5).all()
+
+    def test_keep_top_n(self, panel_df):
+        out = p.collapse(panel_df, "country", keep_top=3)
+        assert out["country"].nunique() <= 4
+
+    def test_keep_prop(self, panel_df):
+        out = p.collapse(panel_df, "country", keep_prop=0.05)
+        counts = out["country"].value_counts(normalize=True)
+        real = counts.drop("Other", errors="ignore")
+        assert (real >= 0.05).all()
+
+    def test_multiple_modes_raises(self, panel_df):
+        with pytest.raises(ValueError, match="exactly one"):
+            p.collapse(panel_df, "country", rare_below=5, keep_top=3)
+
+    def test_custom_other_label(self, panel_df):
+        out = p.collapse(panel_df, "country", rare_below=5, other_label="Rare")
+        assert "Rare" in out["country"].values or out["country"].value_counts().min() >= 5

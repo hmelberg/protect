@@ -27,6 +27,7 @@ __all__ = [
     "month",
     "diff",
     "shorten",
+    "collapse",
 ]
 
 
@@ -792,6 +793,68 @@ def shorten(
                           _truncate(v, _k) if v in _r else v)
 
         out[col] = s
+
+    return out
+
+
+def collapse(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    mapping: dict | None = None,
+    rare_below: int | None = None,
+    keep_top: int | None = None,
+    keep_prop: float | None = None,
+    other_label: str = "Other",
+    by: str | None = None,
+    unit_id: str | None = None,
+    random_state: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Merge categorical levels. Exactly one mode per call.
+
+    Modes
+    -----
+    mapping={old: new, ...}      : explicit hierarchy
+    rare_below=N                 : values appearing < N times → other_label
+    keep_top=N                   : keep N most common; rest → other_label
+    keep_prop=p                  : keep values with proportion ≥ p; rest → other_label
+    """
+    columns = _validate_columns(data, columns)
+    modes = [mapping is not None, rare_below is not None,
+             keep_top is not None, keep_prop is not None]
+    if sum(modes) != 1:
+        raise ValueError(
+            "collapse requires exactly one mode: "
+            "mapping, rare_below, keep_top, or keep_prop"
+        )
+
+    out = data.copy()
+
+    for col in columns:
+        s = out[col]
+
+        if mapping is not None:
+            out[col] = s.map(lambda v: mapping.get(v, v))
+            continue
+
+        def _apply_threshold(series: pd.Series) -> pd.Series:
+            if rare_below is not None:
+                counts = series.value_counts()
+                keep_set = set(counts[counts >= rare_below].index)
+            elif keep_top is not None:
+                counts = series.value_counts()
+                keep_set = set(counts.head(keep_top).index)
+            elif keep_prop is not None:
+                props = series.value_counts(normalize=True)
+                keep_set = set(props[props >= keep_prop].index)
+            else:
+                return series
+            return series.where(series.isin(keep_set), other_label)
+
+        if by is not None:
+            out[col] = out.groupby(by, group_keys=False)[col].apply(_apply_threshold)
+        else:
+            out[col] = _apply_threshold(s)
 
     return out
 
