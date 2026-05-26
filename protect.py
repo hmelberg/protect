@@ -22,6 +22,7 @@ __all__ = [
     "noise",
     "jitter",
     "winsorize",
+    "bin",
 ]
 
 
@@ -459,6 +460,103 @@ def winsorize(
             out[col] = out.groupby(by, group_keys=False)[col].apply(_grp)
 
     return out
+
+
+def bin(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    bins: int | Sequence[float] = 10,
+    method: str = "quantile",
+    labels: str | Sequence[str] = "range",
+    min_count: int | None = None,
+    unit_id: str | None = None,
+    share: float = 1.0,
+) -> pd.DataFrame:
+    """Numeric → discrete intervals.
+
+    Methods
+    -------
+    quantile     : equal-frequency bins (n bins)
+    equal_width  : equal-width bins (n bins between min and max)
+    manual       : `bins` is interpreted as explicit edge list
+
+    Labels
+    ------
+    range    : "10-20" string
+    midpoint : numeric midpoint of each interval
+    index    : integer index (0, 1, 2, ...)
+    list[str]: custom list of labels (length = #bins)
+
+    min_count
+    ---------
+    If set, sparse bins (count < min_count) are merged into the smaller of
+    their adjacent neighbors until all bins meet the threshold.
+    """
+    columns = _validate_columns(data, columns)
+    out = data.copy()
+
+    for col in columns:
+        s = out[col]
+        if method == "quantile":
+            edges = np.unique(s.quantile(np.linspace(0, 1, bins + 1)).values)
+        elif method == "equal_width":
+            edges = np.linspace(s.min(), s.max(), bins + 1)
+        elif method == "manual":
+            edges = np.asarray(bins, dtype=float)
+        else:
+            raise ValueError(f"Unknown bin method: {method!r}")
+
+        cat = pd.cut(s, edges, include_lowest=True, duplicates="drop")
+
+        if min_count is not None:
+            cat = _merge_sparse_bins(cat, min_count)
+
+        if labels == "range":
+            out[col] = cat.astype(str)
+        elif labels == "midpoint":
+            mids = {iv: (iv.left + iv.right) / 2 for iv in cat.cat.categories}
+            out[col] = cat.map(mids).astype(float)
+        elif labels == "index":
+            out[col] = cat.cat.codes
+        else:
+            mapping = dict(zip(cat.cat.categories, labels))
+            out[col] = cat.map(mapping)
+
+    return out
+
+
+def _merge_sparse_bins(cat, min_count: int):
+    """Merge bins below min_count into adjacent bins until all bins meet
+    the threshold. Greedy: merge each sparse bin into its smaller neighbor first.
+    Returns a Series with merged categories.
+    """
+    s = pd.Series(cat).copy()
+    counts = s.value_counts()
+    cats = sorted(counts.index, key=lambda iv: iv.left)
+    while True:
+        sparse = [c for c in cats if counts.get(c, 0) < min_count]
+        if not sparse:
+            break
+        target = sparse[0]
+        i = cats.index(target)
+        left = cats[i - 1] if i > 0 else None
+        right = cats[i + 1] if i < len(cats) - 1 else None
+        if left is None and right is None:
+            break  # only one bin left
+        if left is None:
+            neighbor = right
+        elif right is None:
+            neighbor = left
+        else:
+            neighbor = left if counts.get(left, 0) <= counts.get(right, 0) else right
+        new_iv = pd.Interval(min(target.left, neighbor.left),
+                             max(target.right, neighbor.right),
+                             closed=target.closed)
+        s = s.map(lambda x, t=target, n=neighbor, nv=new_iv: nv if x in (t, n) else x)
+        cats = sorted(set(s.dropna().unique()), key=lambda iv: iv.left)
+        counts = s.value_counts()
+    return pd.Categorical(s, categories=cats, ordered=True)
 
 
 # ============================================================================

@@ -242,3 +242,33 @@ class TestWinsorize:
         out = p.winsorize(small_df, "income", limits=(0.1, 0.9), method="percentile", by="diagnosis")
         assert len(out) == len(small_df)
         assert "income" in out.columns
+
+
+# ============================================================================
+# bin
+# ============================================================================
+
+
+class TestBin:
+    def test_int_bins_produces_n_intervals(self, small_df):
+        out = p.bin(small_df, "income", bins=4)
+        assert out["income"].nunique() <= 4
+
+    def test_explicit_edges(self, small_df):
+        out = p.bin(small_df, "age", bins=[0, 30, 50, 100], method="manual")
+        labels = set(out["age"].unique())
+        assert all(isinstance(x, str) for x in labels)
+
+    def test_midpoint_labels(self, small_df):
+        out = p.bin(small_df, "age", bins=[0, 30, 50, 100], method="manual", labels="midpoint")
+        assert pd.api.types.is_numeric_dtype(out["age"])
+
+    def test_min_count_merges_sparse_bins(self, panel_df):
+        out = p.bin(panel_df, "cost", bins=20, method="quantile", min_count=20)
+        counts = out["cost"].value_counts()
+        assert counts.min() >= 20
+
+    def test_does_not_mutate_input(self, small_df):
+        original = small_df["income"].copy()
+        p.bin(small_df, "income", bins=4)
+        pd.testing.assert_series_equal(small_df["income"], original)
