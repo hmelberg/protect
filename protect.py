@@ -5,6 +5,7 @@ See docs/specs/ for design, README.md for usage, BACKGROUND.md for the SDC prime
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import warnings
 from dataclasses import dataclass, field
@@ -1620,9 +1621,14 @@ def protect(
             verb_name, params = next(iter(step.items()))
             params = dict(params)
 
-            # auto-inject unit_id when the call doesn't specify one
+            # auto-inject unit_id when the call doesn't specify one and the
+            # target verb accepts it (some verbs like pseudonymize do not)
             if unit_id is not None and "unit_id" not in params:
-                params["unit_id"] = unit_id
+                target_fn = _verb_registry.get(verb_name) or _frame_verbs.get(verb_name)
+                if target_fn is not None:
+                    sig = inspect.signature(target_fn)
+                    if "unit_id" in sig.parameters:
+                        params["unit_id"] = unit_id
 
             if verb_name in _verb_registry:
                 fn = _verb_registry[verb_name]
