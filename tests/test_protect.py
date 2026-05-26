@@ -208,3 +208,37 @@ class TestJitter:
         out = p.jitter(panel_df, "income", scale=100, unit_id="pid", random_state=42)
         for pid, grp in out.groupby("pid"):
             assert grp["income"].nunique() == 1
+
+
+# ============================================================================
+# winsorize
+# ============================================================================
+
+
+class TestWinsorize:
+    def test_percentile_method_caps_extremes(self, small_df):
+        out = p.winsorize(small_df, "income", limits=(0.1, 0.9), method="percentile")
+        lo = small_df["income"].quantile(0.1)
+        hi = small_df["income"].quantile(0.9)
+        assert out["income"].min() >= lo
+        assert out["income"].max() <= hi
+
+    def test_value_method_top_codes(self, small_df):
+        out = p.winsorize(small_df, "age", limits=(None, 60), method="value")
+        assert out["age"].max() <= 60
+
+    def test_value_method_bottom_codes(self, small_df):
+        out = p.winsorize(small_df, "age", limits=(25, None), method="value")
+        assert out["age"].min() >= 25
+
+    def test_iqr_method_caps_outliers(self, small_df):
+        out = p.winsorize(small_df, "income", limits=(1.5, 1.5), method="iqr")
+        q1, q3 = small_df["income"].quantile([0.25, 0.75])
+        iqr = q3 - q1
+        assert out["income"].min() >= q1 - 1.5 * iqr
+        assert out["income"].max() <= q3 + 1.5 * iqr
+
+    def test_per_group_caps(self, small_df):
+        out = p.winsorize(small_df, "income", limits=(0.1, 0.9), method="percentile", by="diagnosis")
+        assert len(out) == len(small_df)
+        assert "income" in out.columns

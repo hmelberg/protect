@@ -21,6 +21,7 @@ __all__ = [
     "TransformLog",
     "noise",
     "jitter",
+    "winsorize",
 ]
 
 
@@ -398,6 +399,66 @@ def _draw_jitter_array(rng, distribution, scale, n, is_date):
     if distribution == "uniform":
         return rng.uniform(-scale, scale, size=n)
     return rng.normal(0, scale, size=n)
+
+
+def winsorize(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    limits: tuple[float | None, float | None] = (0.01, 0.99),
+    method: str = "percentile",
+    by: str | None = None,
+    unit_id: str | None = None,
+    share: float = 1.0,
+) -> pd.DataFrame:
+    """Cap extremes.
+
+    Methods
+    -------
+    percentile : limits are quantiles, e.g. (0.01, 0.99)
+    value      : limits are exact bounds, e.g. (None, 90) for top-code at 90
+    gaussian   : limits are SD multipliers; cap at mean ± k·SD
+    iqr        : limits are IQR multipliers; cap at Q1 - k·IQR and Q3 + k·IQR
+    mad        : limits are MAD multipliers; cap at median ± k·MAD
+    """
+    columns = _validate_columns(data, columns)
+    out = data.copy()
+    lo_arg, hi_arg = limits
+
+    def _bounds(s: pd.Series) -> tuple[float | None, float | None]:
+        if method == "percentile":
+            lo = s.quantile(lo_arg) if lo_arg is not None else None
+            hi = s.quantile(hi_arg) if hi_arg is not None else None
+            return lo, hi
+        if method == "value":
+            return lo_arg, hi_arg
+        if method == "gaussian":
+            m, sd = s.mean(), s.std()
+            return (m - lo_arg * sd if lo_arg else None,
+                    m + hi_arg * sd if hi_arg else None)
+        if method == "iqr":
+            q1, q3 = s.quantile([0.25, 0.75])
+            iqr = q3 - q1
+            return (q1 - lo_arg * iqr if lo_arg else None,
+                    q3 + hi_arg * iqr if hi_arg else None)
+        if method == "mad":
+            med = s.median()
+            mad = (s - med).abs().median()
+            return (med - lo_arg * mad if lo_arg else None,
+                    med + hi_arg * mad if hi_arg else None)
+        raise ValueError(f"Unknown winsorize method: {method!r}")
+
+    for col in columns:
+        if by is None:
+            lo, hi = _bounds(out[col])
+            out[col] = out[col].clip(lower=lo, upper=hi)
+        else:
+            def _grp(s):
+                lo, hi = _bounds(s)
+                return s.clip(lower=lo, upper=hi)
+            out[col] = out.groupby(by, group_keys=False)[col].apply(_grp)
+
+    return out
 
 
 # ============================================================================
