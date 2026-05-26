@@ -722,3 +722,40 @@ class TestProfile:
         df_out, log = p.profile(panel_df, "gdpr_pseudonymize", id_cols=["pid"])
         text = log.to_text()
         assert "pid" in text or "pseudonymize" in text
+
+
+# ============================================================================
+# Integration
+# ============================================================================
+
+
+class TestIntegration:
+    def test_full_pipeline_reduces_risk(self, panel_df):
+        r0 = p.risk(panel_df, quasi_ids=["sex", "zip", "country"], unit_id="pid")
+        recipe = {
+            "zip": {"shorten": {"keep": 3}},
+            "country": {"collapse": {"rare_below": 5}},
+        }
+        df_safe, log = p.protect(panel_df, recipe=recipe, unit_id="pid")
+        r1 = p.risk(df_safe, quasi_ids=["sex", "zip", "country"], unit_id="pid")
+        assert r1.units_at_risk <= r0.units_at_risk
+        assert len(log) == 2
+
+    def test_recipe_matches_sequential(self, panel_df):
+        df_a = p.winsorize(panel_df, "income", limits=(0.05, 0.95))
+        df_a = p.shorten(df_a, "icd", sep=".")
+
+        df_b, _ = p.protect(panel_df, recipe={
+            "income": {"winsorize": {"limits": (0.05, 0.95)}},
+            "icd": {"shorten": {"sep": "."}},
+        })
+
+        pd.testing.assert_frame_equal(df_a, df_b)
+
+    def test_transform_log_json_roundtrip(self, panel_df):
+        _, log = p.protect(panel_df, recipe={
+            "income": {"winsorize": {"limits": (0.05, 0.95)}},
+        })
+        data = json.loads(log.to_json())
+        assert "entries" in data
+        assert len(data["entries"]) == 1
