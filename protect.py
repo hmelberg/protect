@@ -31,6 +31,7 @@ __all__ = [
     "pseudonymize",
     "insert",
     "eliminate",
+    "swap",
 ]
 
 
@@ -1095,6 +1096,144 @@ def eliminate(
         return out
 
     return out
+
+
+def swap(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    method: str = "rank",
+    level: str = "row",
+    by: str | None = None,
+    share: float = 0.05,
+    swap_range_pct: float = 0.05,
+    transition: dict | None = None,
+    unit_id: str | None = None,
+    random_state: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Exchange values between rows or whole records between units.
+
+    method describes HOW to match: rank | random | shuffle | pram
+    level  describes WHAT is swapped: row | unit
+    """
+    columns = _validate_columns(data, columns)
+    if level == "unit" and unit_id is None:
+        raise ValueError("level='unit' requires unit_id to be set")
+
+    rng = _resolve_random_state(random_state)
+    out = data.copy()
+
+    if method == "shuffle":
+        for col in columns:
+            if by is None:
+                perm = rng.permutation(len(out))
+                out[col] = out[col].values[perm]
+            else:
+                def _shuf(s, _rng=rng):
+                    return pd.Series(_rng.permutation(s.values), index=s.index)
+                out[col] = out.groupby(by, group_keys=False)[col].apply(_shuf)
+        return out
+
+    if method == "pram":
+        if transition is None:
+            raise ValueError("method='pram' requires transition matrix dict")
+        for col in columns:
+            out[col] = out[col].map(lambda v, _t=transition, _r=rng: _pram_recode(v, _t, _r))
+        return out
+
+    if level == "row":
+        # rank or random row-pair swap
+        for col in columns:
+            n = len(out)
+            n_swap = int(round(n * share))
+            col_idx = out.columns.get_loc(col)
+            if method == "rank":
+                order = out[col].rank(method="first").values.argsort()
+                pairs_done = 0
+                attempts = 0
+                while pairs_done < n_swap // 2 and attempts < n_swap * 10:
+                    i = int(rng.integers(0, n))
+                    window = max(1, int(n * swap_range_pct))
+                    j_candidates = order[max(0, i - window):min(n, i + window + 1)]
+                    j = int(rng.choice(j_candidates))
+                    if j != i:
+                        a = out.iloc[i, col_idx]
+                        b = out.iloc[j, col_idx]
+                        out.iloc[i, col_idx] = b
+                        out.iloc[j, col_idx] = a
+                        pairs_done += 1
+                    attempts += 1
+            elif method == "random":
+                idx_to_swap = rng.choice(n, size=(n_swap // 2) * 2, replace=False)
+                pairs = idx_to_swap.reshape(-1, 2)
+                for i, j in pairs:
+                    a = out.iloc[i, col_idx]
+                    b = out.iloc[j, col_idx]
+                    out.iloc[i, col_idx] = b
+                    out.iloc[j, col_idx] = a
+            else:
+                raise ValueError(f"Unknown method: {method!r}")
+        return out
+
+    # level == "unit": swap whole records between matched units
+    units = data[unit_id].unique()
+    n_units = len(units)
+    n_swap_units = int(round(n_units * share))
+
+    if method == "random":
+        chosen = rng.choice(units, size=(n_swap_units // 2) * 2, replace=False)
+        pairs = chosen.reshape(-1, 2)
+    elif method == "rank":
+        # rank units by the first column's per-unit mean, swap within window
+        first_col = columns[0]
+        unit_vals = data.groupby(unit_id)[first_col].mean().sort_values()
+        ordered = list(unit_vals.index)
+        window = max(1, int(n_units * swap_range_pct))
+        used: set = set()
+        pairs_list: list = []
+        for _ in range(n_swap_units // 2):
+            available_positions = [k for k in range(n_units) if ordered[k] not in used]
+            if not available_positions:
+                break
+            i_pos = int(rng.choice(available_positions))
+            i = ordered[i_pos]
+            j_candidates = [ordered[k]
+                            for k in range(max(0, i_pos - window), min(n_units, i_pos + window + 1))
+                            if ordered[k] != i and ordered[k] not in used]
+            if not j_candidates:
+                continue
+            j = j_candidates[int(rng.integers(0, len(j_candidates)))]
+            pairs_list.append((i, j))
+            used.add(i)
+            used.add(j)
+        pairs = np.array(pairs_list) if pairs_list else np.empty((0, 2))
+    else:
+        raise ValueError(f"Unknown method for level='unit': {method!r}")
+
+    for u1, u2 in pairs:
+        mask1 = out[unit_id] == u1
+        mask2 = out[unit_id] == u2
+        for col in columns:
+            v1 = out.loc[mask1, col].iloc[0] if mask1.any() else None
+            v2 = out.loc[mask2, col].iloc[0] if mask2.any() else None
+            out.loc[mask1, col] = v2
+            out.loc[mask2, col] = v1
+
+    return out
+
+
+def _pram_recode(value, transition: dict, rng: np.random.Generator):
+    """PRAM: probabilistic categorical recoding given a transition matrix."""
+    if pd.isna(value):
+        return value
+    row = transition.get(value)
+    if row is None:
+        return value
+    items = list(row.items())
+    targets = [k for k, _ in items]
+    probs = np.array([v for _, v in items], dtype=float)
+    probs = probs / probs.sum()
+    return rng.choice(targets, p=probs)
 
 
 # ============================================================================

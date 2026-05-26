@@ -512,3 +512,38 @@ class TestEliminate:
     def test_unit_level_requires_unit_id(self, panel_df):
         with pytest.raises(ValueError, match="unit_id"):
             p.eliminate(panel_df, share=0.3, level="unit")
+
+
+# ============================================================================
+# swap
+# ============================================================================
+
+
+class TestSwap:
+    def test_rank_row_swap_changes_some_values(self, panel_df):
+        out = p.swap(panel_df, "cost", method="rank", level="row", share=0.5, random_state=42)
+        assert not (out["cost"].values == panel_df["cost"].values).all()
+        assert sorted(out["cost"].values) == sorted(panel_df["cost"].values)
+
+    def test_random_unit_swap_swaps_whole_records(self, panel_df):
+        out = p.swap(panel_df, "income", method="random", level="unit",
+                     unit_id="pid", share=0.5, random_state=42)
+        for pid, grp in out.groupby("pid"):
+            assert grp["income"].nunique() == 1
+
+    def test_shuffle_within_group_preserves_set(self, panel_df):
+        out = p.swap(panel_df, "cost", method="shuffle", level="row",
+                     by="icd", random_state=42)
+        for icd, grp in panel_df.groupby("icd"):
+            orig = sorted(grp["cost"].values)
+            new = sorted(out.loc[grp.index, "cost"].values)
+            assert orig == new
+
+    def test_unit_level_requires_unit_id(self, panel_df):
+        with pytest.raises(ValueError, match="unit_id"):
+            p.swap(panel_df, "income", method="random", level="unit", share=0.5)
+
+    def test_reproducible(self, panel_df):
+        out1 = p.swap(panel_df, "cost", method="rank", share=0.5, random_state=42)
+        out2 = p.swap(panel_df, "cost", method="rank", share=0.5, random_state=42)
+        pd.testing.assert_frame_equal(out1, out2)
