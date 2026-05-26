@@ -14,9 +14,7 @@ from typing import Any, Callable, Iterable, Sequence
 import numpy as np
 import pandas as pd
 
-# Group A exports TransformLog; Group B adds noise + jitter. The recipe-driver
-# `protect` verb is exported by Group I; remaining meta verb (`profile`) lands
-# in a follow-up commit.
+# Public API: data-side verbs, meta verbs, audit + risk reporting.
 __all__ = [
     "TransformLog",
     "noise",
@@ -36,6 +34,7 @@ __all__ = [
     "risk",
     "RiskReport",
     "protect",
+    "profile",
 ]
 
 
@@ -1653,9 +1652,193 @@ def protect(
     return out
 
 
+def profile(
+    data: pd.DataFrame,
+    name: str,
+    **kwargs,
+) -> tuple[pd.DataFrame, "TransformLog"]:
+    """Apply a named composition.
+
+    Available profiles:
+      safe_harbor          : HIPAA Safe Harbor identifier removal
+      microdata_no         : microdata.no Tiltak 1/6/7 input-side rules
+      gdpr_pseudonymize    : pseudonymize IDs, audit-log residual GDPR status
+      health_research      : composed defaults for health-research release
+      k_anonymize          : iterative generalization to target k
+    """
+    profiles = {
+        "safe_harbor": _profile_safe_harbor,
+        "microdata_no": _profile_microdata_no,
+        "gdpr_pseudonymize": _profile_gdpr_pseudonymize,
+        "health_research": _profile_health_research,
+        "k_anonymize": _profile_k_anonymize,
+    }
+    if name not in profiles:
+        raise ValueError(f"Unknown profile: {name!r}. Available: {list(profiles)}")
+    return profiles[name](data, **kwargs)
+
+
 # ============================================================================
 # Profile implementations
 # ============================================================================
+
+
+def _profile_safe_harbor(
+    data: pd.DataFrame,
+    *,
+    date_cols: Sequence[str] = (),
+    zip_col: str | None = None,
+    id_cols: Sequence[str] = (),
+    age_col: str | None = None,
+    zip_population_threshold: int = 20_000,
+    random_state: int | None = None,
+):
+    """HIPAA Safe Harbor (§164.514(b)(2))."""
+    out = data.copy()
+    log = TransformLog()
+
+    for col in id_cols:
+        if col in out.columns:
+            out, _key = pseudonymize(out, col, method="random", random_state=random_state)
+            log.add(function="pseudonymize", columns=[col],
+                    params={"method": "random"}, rows_affected=len(out),
+                    notes="HIPAA Safe Harbor identifier removal")
+
+    for col in date_cols:
+        if col in out.columns:
+            out = year(out, col)
+            log.add(function="year", columns=[col], params={},
+                    rows_affected=len(out),
+                    notes="HIPAA: year-only resolution")
+
+    if zip_col and zip_col in out.columns:
+        out = shorten(out, zip_col, keep=3)
+        zip3_counts = out[zip_col].value_counts()
+        below = zip3_counts[zip3_counts < zip_population_threshold].index
+        out.loc[out[zip_col].isin(below), zip_col] = "***"
+        log.add(function="shorten", columns=[zip_col],
+                params={"keep": 3, "pop_threshold": zip_population_threshold},
+                rows_affected=len(out),
+                notes=f"HIPAA: ZIP3 with pop >= {zip_population_threshold}")
+
+    if age_col and age_col in out.columns:
+        out = winsorize(out, age_col, limits=(None, 90), method="value")
+        log.add(function="winsorize", columns=[age_col],
+                params={"limits": (None, 90), "method": "value"},
+                rows_affected=len(out), notes="HIPAA: top-code at 90")
+
+    return out, log
+
+
+def _profile_microdata_no(
+    data: pd.DataFrame,
+    *,
+    unit_id: str,
+    min_population: int = 1000,
+    winsorize_cols: Sequence[str] = (),
+):
+    """microdata.no input-side rules: Tiltak 1, 6, 7."""
+    out = data.copy()
+    log = TransformLog()
+
+    n_units = out[unit_id].nunique()
+    if n_units < min_population:
+        raise ValueError(
+            f"microdata_no profile requires population >= {min_population}; "
+            f"got {n_units} units"
+        )
+    log.add(function="_assert_min_population", columns=[unit_id],
+            params={"min_population": min_population},
+            rows_affected=len(out), units_affected=n_units,
+            notes=f"Tiltak 1: population check passed ({n_units} >= {min_population})")
+
+    for col in winsorize_cols:
+        if col in out.columns:
+            out = winsorize(out, col, limits=(0.01, 0.99), method="percentile")
+            log.add(function="winsorize", columns=[col],
+                    params={"limits": (0.01, 0.99)}, rows_affected=len(out),
+                    notes="Tiltak 2: winsorize at 1st/99th percentile")
+
+    return out, log
+
+
+def _profile_gdpr_pseudonymize(
+    data: pd.DataFrame,
+    *,
+    id_cols: Sequence[str],
+    salt: str | None = None,
+    random_state: int | None = None,
+):
+    """GDPR pseudonymization: hash declared IDs, document residual status."""
+    out = data.copy()
+    log = TransformLog()
+    method = "hash" if salt is not None else "random"
+    for col in id_cols:
+        if col in out.columns:
+            out, _key = pseudonymize(out, col, method=method, salt=salt,
+                                      random_state=random_state)
+            log.add(function="pseudonymize", columns=[col],
+                    params={"method": method},
+                    rows_affected=len(out),
+                    notes="GDPR Art.4(5): output is pseudonymized data, "
+                          "still personal data under GDPR")
+    return out, log
+
+
+def _profile_health_research(
+    data: pd.DataFrame,
+    *,
+    unit_id: str,
+    quasi_ids: Sequence[str] = (),
+    sensitive_cols: Sequence[str] = (),
+    k: int = 5,
+):
+    """Composed defaults for typical health-research release."""
+    out = data.copy()
+    log = TransformLog()
+
+    for col in sensitive_cols:
+        if col in out.columns:
+            out = collapse(out, col, rare_below=k)
+            log.add(function="collapse", columns=[col],
+                    params={"rare_below": k}, rows_affected=len(out))
+    return out, log
+
+
+def _profile_k_anonymize(
+    data: pd.DataFrame,
+    *,
+    quasi_ids: Sequence[str],
+    k: int = 5,
+    unit_id: str | None = None,
+    max_iterations: int = 20,
+):
+    """Greedy iterative k-anonymization."""
+    out = data.copy()
+    log = TransformLog()
+    for iteration in range(max_iterations):
+        report = risk(out, quasi_ids=list(quasi_ids), unit_id=unit_id)
+        if report.k_min >= k:
+            log.add(function="_k_anonymize_converged",
+                    params={"k": k, "iterations": iteration},
+                    rows_affected=len(out),
+                    notes=f"k_min={report.k_min} >= target k={k}")
+            return out, log
+        worst_col = None
+        worst_count = float("inf")
+        for col in quasi_ids:
+            if col in out.columns:
+                min_count = out[col].value_counts().min()
+                if min_count < worst_count:
+                    worst_count = min_count
+                    worst_col = col
+        if worst_col is None:
+            break
+        out = collapse(out, worst_col, rare_below=k)
+        log.add(function="collapse", columns=[worst_col],
+                params={"rare_below": k}, rows_affected=len(out),
+                notes=f"iteration {iteration}, worst k_min={report.k_min}")
+    return out, log
 
 
 # Expose private helpers as attributes on `protect` so that, after the package

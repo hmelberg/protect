@@ -695,3 +695,30 @@ class TestProtect:
         df_out, _ = p.protect(panel_df, recipe=recipe, unit_id="pid")
         for pid, grp in df_out.groupby("pid"):
             assert grp["income"].nunique() == 1
+
+
+# ============================================================================
+# profile
+# ============================================================================
+
+
+class TestProfile:
+    def test_safe_harbor_year_only_dob(self, panel_df):
+        df_out, log = p.profile(panel_df, "safe_harbor",
+                                 date_cols=["dob"], zip_col="zip", id_cols=["pid"])
+        assert pd.api.types.is_integer_dtype(df_out["dob"])
+
+    def test_safe_harbor_pseudonymizes_ids(self, panel_df):
+        df_out, _ = p.profile(panel_df, "safe_harbor",
+                               date_cols=["dob"], zip_col="zip", id_cols=["pid"])
+        assert not (df_out["pid"] == panel_df["pid"]).all()
+
+    def test_microdata_no_raises_on_small_population(self):
+        small = pd.DataFrame({"pid": ["A", "B"], "income": [100, 200]})
+        with pytest.raises(ValueError, match="population"):
+            p.profile(small, "microdata_no", unit_id="pid")
+
+    def test_gdpr_pseudonymize_returns_log_with_note(self, panel_df):
+        df_out, log = p.profile(panel_df, "gdpr_pseudonymize", id_cols=["pid"])
+        text = log.to_text()
+        assert "pid" in text or "pseudonymize" in text
