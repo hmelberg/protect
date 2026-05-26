@@ -434,3 +434,37 @@ class TestPseudonymize:
     def test_return_key_false(self, panel_df):
         result = p.pseudonymize(panel_df, "pid", method="random", return_key=False, random_state=42)
         assert isinstance(result, pd.DataFrame)
+
+
+# ============================================================================
+# insert
+# ============================================================================
+
+
+class TestInsert:
+    def test_row_level_default(self, panel_df):
+        out = p.insert(panel_df, share=0.1, random_state=42)
+        assert len(out) > len(panel_df)
+
+    def test_row_level_n(self, panel_df):
+        out = p.insert(panel_df, n=20, random_state=42)
+        assert len(out) == len(panel_df) + 20
+
+    def test_unit_level_adds_new_units(self, panel_df):
+        out = p.insert(panel_df, share=0.1, level="unit", unit_id="pid", random_state=42)
+        n_original = panel_df["pid"].nunique()
+        n_new = out["pid"].nunique()
+        assert n_new > n_original
+
+    def test_unit_level_decoys_have_new_pids(self, panel_df):
+        out = p.insert(panel_df, share=0.1, level="unit", unit_id="pid", random_state=42)
+        new_pids = set(out["pid"]) - set(panel_df["pid"])
+        assert len(new_pids) > 0
+
+    def test_unit_level_requires_unit_id(self, panel_df):
+        with pytest.raises(ValueError, match="unit_id"):
+            p.insert(panel_df, share=0.1, level="unit")
+
+    def test_warns_above_threshold(self, panel_df):
+        with pytest.warns(UserWarning, match="share"):
+            p.insert(panel_df, share=0.1, random_state=42)

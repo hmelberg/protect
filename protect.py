@@ -29,6 +29,7 @@ __all__ = [
     "shorten",
     "collapse",
     "pseudonymize",
+    "insert",
 ]
 
 
@@ -936,6 +937,92 @@ def pseudonymize(
 # ============================================================================
 # Record-level verbs
 # ============================================================================
+
+
+def insert(
+    data: pd.DataFrame,
+    *,
+    n: int | None = None,
+    share: float = 0.01,
+    level: str = "row",
+    source: str = "resample",
+    modify: dict | None = None,
+    new_unit_ids: bool = True,
+    unit_id: str | None = None,
+    random_state: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Inject decoy rows or units.
+
+    level='row'  : add N decoy rows
+    level='unit' : add N decoy units, each with realistic row-count history
+                   (drawn from real units' row-count distribution)
+
+    source='resample'           : draw real rows then optionally modify
+    source='sample_per_column'  : draw each column independently (breaks correlations)
+    """
+    if level not in ("row", "unit"):
+        raise ValueError(f"level must be 'row' or 'unit', got {level!r}")
+    if level == "unit" and unit_id is None:
+        raise ValueError("level='unit' requires unit_id to be set")
+
+    rng = _resolve_random_state(random_state)
+
+    if share > 0.05:
+        warnings.warn(f"insert share={share} > 0.05 may distort statistics", stacklevel=2)
+
+    if level == "row":
+        n_decoys = n if n is not None else int(round(len(data) * share))
+        sample = _generate_decoys(data, n_decoys, source, rng, modify)
+        if new_unit_ids and unit_id is not None and unit_id in sample.columns:
+            sample[unit_id] = [f"DECOY{i:06d}" for i in range(n_decoys)]
+        return pd.concat([data, sample], ignore_index=True)
+
+    # level == "unit"
+    n_units = data[unit_id].nunique()
+    n_decoy_units = n if n is not None else int(round(n_units * share))
+    row_counts = data.groupby(unit_id).size().values
+    decoys = []
+    for i in range(n_decoy_units):
+        rc = int(rng.choice(row_counts))
+        sample = _generate_decoys(data, rc, source, rng, modify)
+        new_id = f"DECOY{i:06d}"
+        sample[unit_id] = new_id
+        decoys.append(sample)
+    if decoys:
+        return pd.concat([data] + decoys, ignore_index=True)
+    return data.copy()
+
+
+def _generate_decoys(
+    data: pd.DataFrame,
+    n: int,
+    source: str,
+    rng: np.random.Generator,
+    modify: dict | None,
+) -> pd.DataFrame:
+    """Generate n decoy rows."""
+    if source == "resample":
+        idx = rng.choice(len(data), size=n, replace=True)
+        sample = data.iloc[idx].reset_index(drop=True)
+    elif source == "sample_per_column":
+        sample = pd.DataFrame({
+            c: data[c].sample(n=n, replace=True, random_state=int(rng.integers(0, 2**31))).values
+            for c in data.columns
+        })
+    else:
+        raise ValueError(f"Unknown source: {source!r}")
+
+    if modify:
+        for col, (op, mag) in modify.items():
+            if col not in sample.columns:
+                continue
+            if op == "noise":
+                sample[col] = sample[col] + rng.normal(0, mag, size=n)
+            elif op == "shift" and pd.api.types.is_datetime64_any_dtype(sample[col]):
+                offsets = rng.integers(-mag, mag + 1, size=n)
+                sample[col] = sample[col] + pd.to_timedelta(offsets, unit="D")
+
+    return sample
 
 
 # ============================================================================
