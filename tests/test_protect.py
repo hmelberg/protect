@@ -468,3 +468,47 @@ class TestInsert:
     def test_warns_above_threshold(self, panel_df):
         with pytest.warns(UserWarning, match="share"):
             p.insert(panel_df, share=0.1, random_state=42)
+
+
+# ============================================================================
+# eliminate
+# ============================================================================
+
+
+class TestEliminate:
+    def test_where_drops_matching_rows(self, small_df):
+        out = p.eliminate(small_df, where=small_df["age"] > 50)
+        assert (out["age"] <= 50).all()
+
+    def test_share_drops_rows(self, small_df):
+        out = p.eliminate(small_df, share=0.3, random_state=42)
+        assert len(out) < len(small_df)
+
+    def test_share_unit_level_drops_units(self, panel_df):
+        out = p.eliminate(panel_df, share=0.3, level="unit", unit_id="pid", random_state=42)
+        for pid, grp in out.groupby("pid"):
+            n_in_orig = (panel_df["pid"] == pid).sum()
+            assert len(grp) == n_in_orig
+
+    def test_rare_below_masks_rare_values(self, panel_df):
+        out = p.eliminate(panel_df, rare_below=3, columns=["country"])
+        counts = panel_df["country"].value_counts()
+        rare = counts[counts < 3].index.tolist()
+        for r in rare:
+            assert (out["country"] != r).all()
+
+    def test_no_args_raises(self, small_df):
+        with pytest.raises(ValueError, match="mode"):
+            p.eliminate(small_df)
+
+    def test_multiple_modes_raises(self, small_df):
+        with pytest.raises(ValueError, match="exactly one"):
+            p.eliminate(small_df, where=small_df["age"] > 50, share=0.1)
+
+    def test_columns_only_masks_to_nan(self, small_df):
+        out = p.eliminate(small_df, columns=["income"])
+        assert out["income"].isna().all()
+
+    def test_unit_level_requires_unit_id(self, panel_df):
+        with pytest.raises(ValueError, match="unit_id"):
+            p.eliminate(panel_df, share=0.3, level="unit")

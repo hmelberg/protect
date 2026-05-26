@@ -30,6 +30,7 @@ __all__ = [
     "collapse",
     "pseudonymize",
     "insert",
+    "eliminate",
 ]
 
 
@@ -1023,6 +1024,77 @@ def _generate_decoys(
                 sample[col] = sample[col] + pd.to_timedelta(offsets, unit="D")
 
     return sample
+
+
+def eliminate(
+    data: pd.DataFrame,
+    *,
+    where: pd.Series | None = None,
+    rare_below: int | None = None,
+    share: float | None = None,
+    level: str = "row",
+    columns: Sequence[str] | None = None,
+    replace_with=None,
+    unit_id: str | None = None,
+    random_state: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Drop rows/units or mask cells.
+
+    Modes (exactly one of where, rare_below, share, OR columns-only):
+    - where=<bool Series>   : drop matching rows (or units with level='unit')
+    - rare_below=N          : mask cells whose value count < N in given columns
+    - share=p               : drop random p% of rows (or units with level='unit')
+    - columns=[...] only    : mask all cells in those columns to NaN (or replace_with)
+
+    Raises if no mode is given (no silent no-op).
+    """
+    modes = [where is not None, rare_below is not None, share is not None]
+    only_columns = (sum(modes) == 0 and columns is not None)
+    if sum(modes) == 0 and not only_columns:
+        raise ValueError(
+            "eliminate requires a mode arg: where, rare_below, share, or columns"
+        )
+    if sum(modes) > 1:
+        raise ValueError("eliminate accepts exactly one of where, rare_below, or share")
+    if level == "unit" and unit_id is None:
+        raise ValueError("level='unit' requires unit_id to be set")
+
+    rng = _resolve_random_state(random_state)
+    out = data.copy()
+
+    if where is not None:
+        if level == "unit":
+            units_to_drop = data.loc[where, unit_id].unique()
+            return out[~out[unit_id].isin(units_to_drop)].reset_index(drop=True)
+        return out[~where].reset_index(drop=True)
+
+    if share is not None:
+        if share > 0.05:
+            warnings.warn(f"eliminate share={share} > 0.05 may distort statistics", stacklevel=2)
+        mask = _select_share(data, share, unit_id if level == "unit" else None, rng)
+        return out[~mask].reset_index(drop=True)
+
+    if rare_below is not None:
+        cols = _validate_columns(out, columns) if columns else list(out.columns)
+        for col in cols:
+            counts = out[col].value_counts()
+            rare = counts[counts < rare_below].index
+            if level == "unit":
+                units_with_rare = data.loc[data[col].isin(rare), unit_id].unique()
+                mask_rows = out[unit_id].isin(units_with_rare)
+                out.loc[mask_rows, col] = replace_with if replace_with is not None else np.nan
+            else:
+                out.loc[out[col].isin(rare), col] = replace_with if replace_with is not None else np.nan
+        return out
+
+    # only_columns mode
+    if columns:
+        cols = _validate_columns(out, columns)
+        for col in cols:
+            out[col] = replace_with if replace_with is not None else np.nan
+        return out
+
+    return out
 
 
 # ============================================================================
