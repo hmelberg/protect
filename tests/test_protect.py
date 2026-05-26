@@ -169,3 +169,42 @@ class TestNoise:
     def test_raises_on_missing_column(self, small_df):
         with pytest.raises(KeyError):
             p.noise(small_df, "nonexistent", scale=1.0)
+
+
+# ============================================================================
+# jitter
+# ============================================================================
+
+
+class TestJitter:
+    def test_auto_scale_works_without_explicit_scale(self, small_df):
+        out = p.jitter(small_df, "income", random_state=42)
+        assert not (out["income"] == small_df["income"]).all()
+
+    def test_auto_scale_date_column(self, panel_df):
+        out = p.jitter(panel_df, "visit", random_state=42)
+        diff = (out["visit"] - panel_df["visit"]).abs()
+        assert (diff <= pd.Timedelta("1 day")).all()
+
+    def test_jitter_numeric_changes_values(self, small_df):
+        out = p.jitter(small_df, "income", scale=100, random_state=42)
+        assert not (out["income"] == small_df["income"]).all()
+
+    def test_jitter_numeric_bounded(self, small_df):
+        out = p.jitter(small_df, "income", scale=100, random_state=42)
+        diff = (out["income"] - small_df["income"]).abs()
+        assert (diff < 100).all()
+
+    def test_jitter_date_column(self, panel_df):
+        out = p.jitter(panel_df, "visit", scale="3 days", random_state=42)
+        diff = (out["visit"] - panel_df["visit"]).abs()
+        assert (diff <= pd.Timedelta("3 days")).all()
+
+    def test_jitter_gaussian_distribution(self, small_df):
+        out = p.jitter(small_df, "income", scale=50, distribution="gaussian", random_state=42)
+        assert not (out["income"] == small_df["income"]).all()
+
+    def test_jitter_unit_id_consistency(self, panel_df):
+        out = p.jitter(panel_df, "income", scale=100, unit_id="pid", random_state=42)
+        for pid, grp in out.groupby("pid"):
+            assert grp["income"].nunique() == 1

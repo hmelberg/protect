@@ -13,7 +13,11 @@ def panel_df():
     n_patients = 200
     visits_per_patient = rng.integers(1, 6, size=n_patients)
     countries = ["USA"] * 80 + ["UK"] * 40 + ["DE"] * 30 + ["IN"] * 20 + ["NO"] * 15
-    countries += ["IS", "LI", "AD", "TV", "NR", "BT", "SM", "MC", "VA", "FM"][:n_patients - len(countries)]
+    rare = ["IS", "LI", "AD", "TV", "NR", "BT", "SM", "MC", "VA", "FM"]
+    # Pad with rare codes (cycling if needed) so length matches n_patients.
+    deficit = n_patients - len(countries)
+    if deficit > 0:
+        countries += [rare[i % len(rare)] for i in range(deficit)]
     rng.shuffle(countries)
     icd_codes = ["I10", "I10.9", "E11.9", "E11", "J45.909", "K21.9", "M54.5", "F32.9", "C50.9", "Z00.00"]
 

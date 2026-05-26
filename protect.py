@@ -20,6 +20,7 @@ import pandas as pd
 __all__ = [
     "TransformLog",
     "noise",
+    "jitter",
 ]
 
 
@@ -315,6 +316,88 @@ def _noise_group_mean(data: pd.DataFrame, col: str, k: int, by: str | None) -> p
     if by is None:
         return _agg(data[col])
     return data.groupby(by, group_keys=False)[col].apply(_agg)
+
+
+def jitter(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    scale: float | str | pd.Timedelta = "auto",
+    distribution: str = "uniform",
+    unit_id: str | None = None,
+    share: float = 1.0,
+    random_state: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Small symmetric noise — for numeric or date columns.
+
+    Use for plot-safe perturbation; use `noise` when distribution and scale
+    matter for downstream statistics.
+
+    Default scale='auto' computes 0.01 x column_range for numeric columns
+    and '1 day' for date columns.
+    """
+    rng = _resolve_random_state(random_state)
+    columns = _validate_columns(data, columns)
+    out = data.copy()
+    select_mask = _select_share(data, share, unit_id, rng)
+    n_total = len(data)
+
+    if not select_mask.any():
+        return out
+
+    for col in columns:
+        is_date = pd.api.types.is_datetime64_any_dtype(out[col])
+        col_scale = _resolve_jitter_scale(out[col], scale, is_date)
+
+        if unit_id is not None:
+            draws = _apply_per_unit(
+                data, unit_id,
+                lambda _u, _s=col_scale, _d=is_date: _draw_jitter_scalar(rng, distribution, _s, _d),
+            )
+            noise_arr = draws.values
+        else:
+            noise_arr = _draw_jitter_array(rng, distribution, col_scale, n_total, is_date)
+
+        if is_date:
+            applied = np.where(select_mask.values, noise_arr, pd.Timedelta(0))
+            out[col] = out[col] + pd.to_timedelta(applied)
+        else:
+            applied = np.where(select_mask.values, noise_arr, 0.0)
+            out[col] = out[col].values + applied
+
+    return out
+
+
+def _resolve_jitter_scale(series: pd.Series, scale, is_date: bool):
+    """Compute the effective scale for jitter, handling 'auto'."""
+    if scale == "auto":
+        if is_date:
+            return pd.Timedelta("1 day")
+        rng_ = float(series.max() - series.min())
+        if rng_ == 0 or np.isnan(rng_):
+            return 1.0
+        return 0.01 * rng_
+    return pd.Timedelta(scale) if is_date else float(scale)
+
+
+def _draw_jitter_scalar(rng, distribution, scale, is_date):
+    """Draw a single jitter sample (numeric or Timedelta)."""
+    if is_date:
+        rng_value = rng.uniform(-1, 1) if distribution == "uniform" else rng.normal(0, 1)
+        return rng_value * scale
+    if distribution == "uniform":
+        return rng.uniform(-scale, scale)
+    return rng.normal(0, scale)
+
+
+def _draw_jitter_array(rng, distribution, scale, n, is_date):
+    """Draw an array of jitter samples."""
+    if is_date:
+        u = rng.uniform(-1, 1, size=n) if distribution == "uniform" else rng.normal(0, 1, size=n)
+        return np.array([x * scale for x in u])
+    if distribution == "uniform":
+        return rng.uniform(-scale, scale, size=n)
+    return rng.normal(0, scale, size=n)
 
 
 # ============================================================================
