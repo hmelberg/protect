@@ -448,18 +448,18 @@ def winsorize(
             return lo_arg, hi_arg
         if method == "gaussian":
             m, sd = s.mean(), s.std()
-            return (m - lo_arg * sd if lo_arg else None,
-                    m + hi_arg * sd if hi_arg else None)
+            return (m - lo_arg * sd if lo_arg is not None else None,
+                    m + hi_arg * sd if hi_arg is not None else None)
         if method == "iqr":
             q1, q3 = s.quantile([0.25, 0.75])
             iqr = q3 - q1
-            return (q1 - lo_arg * iqr if lo_arg else None,
-                    q3 + hi_arg * iqr if hi_arg else None)
+            return (q1 - lo_arg * iqr if lo_arg is not None else None,
+                    q3 + hi_arg * iqr if hi_arg is not None else None)
         if method == "mad":
             med = s.median()
             mad = (s - med).abs().median()
-            return (med - lo_arg * mad if lo_arg else None,
-                    med + hi_arg * mad if hi_arg else None)
+            return (med - lo_arg * mad if lo_arg is not None else None,
+                    med + hi_arg * mad if hi_arg is not None else None)
         raise ValueError(f"Unknown winsorize method: {method!r}")
 
     for col in columns:

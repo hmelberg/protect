@@ -243,6 +243,14 @@ class TestWinsorize:
         assert len(out) == len(small_df)
         assert "income" in out.columns
 
+    def test_zero_lo_arg_is_honored_not_treated_as_none(self, small_df):
+        """Bug regression: lo_arg=0 must be treated as bound 0, not 'no bound'.
+        Affects gaussian/iqr/mad methods where 0 is a valid multiplier."""
+        out = p.winsorize(small_df, "income", limits=(0, 2), method="gaussian")
+        # With lo_arg=0, lower bound is mean - 0*SD = mean. All values below mean
+        # should be capped at the mean.
+        assert out["income"].min() == pytest.approx(small_df["income"].mean(), rel=0.001)
+
 
 # ============================================================================
 # bin
