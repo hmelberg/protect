@@ -25,6 +25,7 @@ __all__ = [
     "bin",
     "year",
     "month",
+    "diff",
 ]
 
 
@@ -624,6 +625,95 @@ def month(
             )
         else:
             out[col] = y.astype(str) + "-" + m.astype(str).str.zfill(2)
+    return out
+
+
+def diff(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    ref="first_per_unit",
+    unit: str = "days",
+    keep_order: bool = True,
+    unit_id: str | None = None,
+    share: float = 1.0,
+    random_state: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Convert dates to numeric diff from a reference.
+
+    ref options
+    -----------
+    'first_per_unit' (default) : earliest date per unit (requires unit_id)
+    'min'                      : minimum date in the column
+    'random_per_unit'          : random anchor per unit (requires unit_id)
+    column name (str)          : pairwise anchor from another date column
+    pd.Timestamp or date string: fixed scalar anchor
+
+    unit : 'days' | 'months' | 'years'
+
+    keep_order=True raises if the result would reorder events within a unit
+    (critical for survival-analysis correctness).
+    """
+    columns = _validate_columns(data, columns)
+    out = data.copy()
+
+    if ref in ("first_per_unit", "random_per_unit") and unit_id is None:
+        raise ValueError(f"ref={ref!r} requires unit_id to be set")
+
+    rng = _resolve_random_state(random_state)
+
+    for col in columns:
+        dt = pd.to_datetime(out[col])
+        if ref == "first_per_unit":
+            anchor = data.groupby(unit_id)[col].transform("min")
+        elif ref == "min":
+            anchor = pd.Timestamp(dt.min())
+        elif ref == "random_per_unit":
+            units = data[unit_id].unique()
+            min_date = dt.min()
+            max_date = dt.max()
+            span_days = max((max_date - min_date).days, 1)
+            unit_anchors = {
+                u: min_date + pd.Timedelta(days=int(rng.integers(0, span_days + 1)))
+                for u in units
+            }
+            anchor = data[unit_id].map(unit_anchors)
+        elif isinstance(ref, str) and ref in data.columns:
+            anchor = pd.to_datetime(data[ref])
+        elif isinstance(ref, (pd.Timestamp,)):
+            anchor = ref
+        elif isinstance(ref, str):
+            anchor = pd.Timestamp(ref)
+        else:
+            raise ValueError(f"Unsupported ref: {ref!r}")
+
+        delta = (dt - anchor)
+        if isinstance(delta, pd.Series):
+            days = delta.dt.days
+        else:
+            days = pd.Series([delta.days] * len(out), index=out.index)
+
+        if unit == "days":
+            result = days.astype(int)
+        elif unit == "months":
+            result = (days / 30.44).astype(int)
+        elif unit == "years":
+            result = (days / 365.25).astype(int)
+        else:
+            raise ValueError(f"Unknown unit: {unit!r}")
+
+        if keep_order and unit_id is not None:
+            for pid, grp in data.groupby(unit_id):
+                orig_order = dt.loc[grp.index].rank(method="first")
+                new_order = result.loc[grp.index].rank(method="first")
+                if not (orig_order.values == new_order.values).all():
+                    raise ValueError(
+                        f"diff would reorder events within unit {pid!r}; "
+                        f"keep_order=True"
+                    )
+
+        out[col] = result
+
     return out
 
 

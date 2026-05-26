@@ -303,3 +303,36 @@ class TestYearMonth:
         out = p.month(panel_df, "visit", bin=3)
         per_year_bins = out["visit"].apply(lambda x: x.split("-")[0]).nunique()
         assert per_year_bins > 0
+
+
+# ============================================================================
+# diff
+# ============================================================================
+
+
+class TestDiff:
+    def test_diff_from_first_per_unit(self, panel_df):
+        out = p.diff(panel_df, "visit", ref="first_per_unit", unit_id="pid")
+        for pid, grp in panel_df.groupby("pid"):
+            first_visit_idx = grp.index.min()
+            assert out.loc[first_visit_idx, "visit"] == 0
+        assert (out["visit"] >= 0).all()
+
+    def test_diff_from_min(self, panel_df):
+        out = p.diff(panel_df, "visit", ref="min")
+        assert out["visit"].min() == 0
+
+    def test_diff_from_scalar_date(self, panel_df):
+        ref_date = pd.Timestamp("2020-01-01")
+        out = p.diff(panel_df, "visit", ref=ref_date)
+        expected = (panel_df["visit"] - ref_date).dt.days
+        pd.testing.assert_series_equal(out["visit"], expected.astype(int), check_names=False)
+
+    def test_diff_months_unit(self, panel_df):
+        out = p.diff(panel_df, "visit", ref="min", unit="months")
+        days_out = p.diff(panel_df, "visit", ref="min", unit="days")
+        assert out["visit"].max() < days_out["visit"].max()
+
+    def test_diff_requires_unit_id_for_per_unit_ref(self, panel_df):
+        with pytest.raises(ValueError, match="unit_id"):
+            p.diff(panel_df, "visit", ref="first_per_unit")
