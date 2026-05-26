@@ -47,3 +47,63 @@ class TestTransformLog:
         assert summary["by_function"]["noise"] == 2
         assert summary["by_function"]["bin"] == 1
         assert summary["total_operations"] == 3
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+
+class TestHelpers:
+    def test_resolve_random_state_int_seeds(self):
+        rng1 = p.protect._resolve_random_state(42)
+        rng2 = p.protect._resolve_random_state(42)
+        assert rng1.integers(0, 100) == rng2.integers(0, 100)
+
+    def test_resolve_random_state_none_is_random(self):
+        rng = p.protect._resolve_random_state(None)
+        assert isinstance(rng, np.random.Generator)
+
+    def test_validate_columns_accepts_str(self, small_df):
+        cols = p.protect._validate_columns(small_df, "age")
+        assert cols == ["age"]
+
+    def test_validate_columns_accepts_list(self, small_df):
+        cols = p.protect._validate_columns(small_df, ["age", "income"])
+        assert cols == ["age", "income"]
+
+    def test_validate_columns_raises_on_missing(self, small_df):
+        with pytest.raises(KeyError, match="not in DataFrame"):
+            p.protect._validate_columns(small_df, "nonexistent")
+
+    def test_select_share_returns_correct_count(self, small_df):
+        rng = np.random.default_rng(42)
+        mask = p.protect._select_share(small_df, share=0.5, unit_id=None, rng=rng)
+        assert mask.sum() == 10
+
+    def test_select_share_by_unit_selects_whole_units(self, small_df):
+        rng = np.random.default_rng(42)
+        mask = p.protect._select_share(small_df, share=0.5, unit_id="pid", rng=rng)
+        for pid, grp in small_df.groupby("pid"):
+            mask_for_unit = mask[grp.index]
+            assert mask_for_unit.nunique() == 1
+
+    def test_select_share_zero_is_no_op(self, small_df):
+        rng = np.random.default_rng(42)
+        mask = p.protect._select_share(small_df, share=0.0, unit_id="pid", rng=rng)
+        assert not mask.any()
+
+    def test_select_share_one_selects_all(self, small_df):
+        rng = np.random.default_rng(42)
+        mask = p.protect._select_share(small_df, share=1.0, unit_id="pid", rng=rng)
+        assert mask.all()
+
+    def test_apply_per_unit_consistency(self, small_df):
+        rng = np.random.default_rng(42)
+
+        def draw(_): return rng.normal()
+
+        result = p.protect._apply_per_unit(small_df, "pid", draw)
+        for pid, grp in small_df.groupby("pid"):
+            vals = result[grp.index]
+            assert vals.nunique() == 1

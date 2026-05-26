@@ -79,6 +79,73 @@ class TransformLog:
 # ============================================================================
 
 
+def _resolve_random_state(random_state: int | np.random.Generator | None) -> np.random.Generator:
+    if isinstance(random_state, np.random.Generator):
+        return random_state
+    return np.random.default_rng(random_state)
+
+
+def _validate_columns(data: pd.DataFrame, columns: str | Sequence[str]) -> list[str]:
+    if isinstance(columns, str):
+        columns = [columns]
+    columns = list(columns)
+    missing = [c for c in columns if c not in data.columns]
+    if missing:
+        raise KeyError(f"Columns {missing} not in DataFrame")
+    return columns
+
+
+def _select_share(
+    data: pd.DataFrame,
+    share: float,
+    unit_id: str | None,
+    rng: np.random.Generator,
+) -> pd.Series:
+    if share <= 0:
+        return pd.Series(False, index=data.index)
+    if share >= 1:
+        return pd.Series(True, index=data.index)
+
+    if unit_id is None:
+        n = len(data)
+        n_select = int(round(n * share))
+        choice = rng.choice(n, size=n_select, replace=False)
+        mask = np.zeros(n, dtype=bool)
+        mask[choice] = True
+        return pd.Series(mask, index=data.index)
+
+    units = data[unit_id].unique()
+    n_select = int(round(len(units) * share))
+    selected = set(rng.choice(units, size=n_select, replace=False))
+    return data[unit_id].isin(selected)
+
+
+def _apply_per_unit(
+    data: pd.DataFrame,
+    unit_id: str,
+    fn: Callable[[Any], Any],
+) -> pd.Series:
+    units = data[unit_id].unique()
+    draws = {u: fn(u) for u in units}
+    return data[unit_id].map(draws)
+
+
+def _check_unit_invariant(
+    data: pd.DataFrame,
+    columns: Sequence[str],
+    unit_id: str,
+) -> None:
+    for col in columns:
+        n_distinct = data.groupby(unit_id)[col].nunique()
+        violating = n_distinct[n_distinct > 1]
+        if len(violating) > 0:
+            warnings.warn(
+                f"Column {col!r} varies within {len(violating)} units "
+                f"(declared invariant); first offender: {violating.index[0]!r}",
+                stacklevel=2,
+            )
+
+
 # ============================================================================
 # Value-level verbs
 # ============================================================================
