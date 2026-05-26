@@ -32,6 +32,7 @@ __all__ = [
     "insert",
     "eliminate",
     "swap",
+    "suppress",
 ]
 
 
@@ -1239,6 +1240,196 @@ def _pram_recode(value, transition: dict, rng: np.random.Generator):
 # ============================================================================
 # Output verb
 # ============================================================================
+
+
+def suppress(target, **kwargs):
+    """Polymorphic output protection. Dispatches on target type.
+
+    For pandas Series/DataFrame: min_n, counts, dominance, p_percent, round,
+        ranges, contributions, secondary
+    For statsmodels result: redact_intercept, widen_alpha, group_counts
+    For plot data ((x, y) tuple): hexbin, bin_histogram, jitter, gridsize,
+        bins, min_count
+    """
+    if isinstance(target, (pd.Series, pd.DataFrame)):
+        return _suppress_table(target, **kwargs)
+    if hasattr(target, "params") and hasattr(target, "conf_int"):
+        return _suppress_regression(target, **kwargs)
+    if isinstance(target, tuple) and len(target) == 2:
+        return _suppress_plot(target, **kwargs)
+    raise NotImplementedError(
+        f"suppress does not handle target of type {type(target).__name__}"
+    )
+
+
+def _suppress_table(
+    target,
+    *,
+    min_n: int | None = None,
+    counts=None,
+    dominance: tuple[int, float] | None = None,
+    p_percent: float | None = None,
+    round: int | None = None,
+    ranges: Sequence[tuple[int, int]] | None = None,
+    contributions: dict | None = None,
+    secondary: bool = False,
+):
+    out = target.copy()
+
+    # primary suppression by frequency
+    if min_n is not None:
+        if counts is None:
+            counts = out
+        mask = counts < min_n
+        out = out.where(~mask, other=np.nan)
+
+    # dominance rule
+    if dominance is not None and contributions is not None:
+        n, k = dominance
+        idx_iter = list(out.index)
+        for idx in idx_iter:
+            contribs = sorted(contributions.get(idx, []), reverse=True)
+            total = sum(contribs) if contribs else 0
+            top_n_sum = sum(contribs[:n])
+            if total > 0 and top_n_sum / total > k:
+                if isinstance(out, pd.Series):
+                    out[idx] = np.nan
+                else:
+                    out.loc[idx] = np.nan
+
+    # p%-rule
+    if p_percent is not None and contributions is not None:
+        idx_iter = list(out.index)
+        for idx in idx_iter:
+            contribs = sorted(contributions.get(idx, []), reverse=True)
+            if len(contribs) < 3:
+                continue
+            x1, x2 = contribs[0], contribs[1]
+            sum_rest = sum(contribs[2:])
+            if sum_rest == 0 or x1 == 0:
+                continue
+            if sum_rest / x1 < p_percent:
+                if isinstance(out, pd.Series):
+                    out[idx] = np.nan
+                else:
+                    out.loc[idx] = np.nan
+
+    # rounding
+    if round is not None:
+        out = (out / round).round() * round
+
+    # fuzzy ranges
+    if ranges is not None:
+        def _range_label(v):
+            if pd.isna(v):
+                return v
+            for lo, hi in ranges:
+                if lo <= v <= hi:
+                    return f"{lo}-{hi}"
+            return f">{ranges[-1][1]}"
+        if isinstance(out, pd.Series):
+            out = out.map(_range_label)
+        else:
+            out = out.applymap(_range_label)
+
+    if secondary:
+        out = _secondary_suppression(out)
+
+    return out
+
+
+def _secondary_suppression(table):
+    """Greedy secondary suppression. For DataFrames: if a row or column has
+    exactly one NaN, suppress the smallest remaining value so marginals can't
+    recover the suppressed value. For Series: no-op (no marginal structure).
+    """
+    if isinstance(table, pd.Series):
+        return table
+    changed = True
+    while changed:
+        changed = False
+        for axis_idx in range(2):
+            n = table.shape[axis_idx]
+            for i in range(n):
+                row = table.iloc[i, :] if axis_idx == 0 else table.iloc[:, i]
+                nan_count = row.isna().sum()
+                if nan_count == 1:
+                    remaining = row.dropna()
+                    if len(remaining) == 0:
+                        continue
+                    smallest = remaining.idxmin()
+                    if axis_idx == 0:
+                        table.iloc[i, table.columns.get_loc(smallest)] = np.nan
+                    else:
+                        table.iloc[table.index.get_loc(smallest), i] = np.nan
+                    changed = True
+    return table
+
+
+def _suppress_regression(
+    result,
+    *,
+    redact_intercept: int | None = None,
+    widen_alpha: float | None = None,
+    group_counts: dict | None = None,
+):
+    """Return a lightweight namespace mimicking the statsmodels API surface
+    we need (params, conf_int).
+    """
+    import types
+    params = result.params.copy()
+    if widen_alpha is not None:
+        ci = result.conf_int(alpha=widen_alpha)
+    else:
+        ci = result.conf_int()
+
+    if redact_intercept is not None and group_counts is not None:
+        smallest = min(group_counts.values())
+        if smallest < redact_intercept:
+            intercept_name = "const" if "const" in params.index else params.index[0]
+            params[intercept_name] = np.nan
+            ci.loc[intercept_name] = np.nan
+
+    ns = types.SimpleNamespace()
+    ns.params = params
+    ns.conf_int = lambda: ci
+    ns.summary_text = (
+        f"Suppressed regression result:\n{params.to_string()}\n\nCI:\n{ci.to_string()}"
+    )
+    return ns
+
+
+def _suppress_plot(
+    xy,
+    *,
+    hexbin: bool = False,
+    bin_histogram: bool = False,
+    gridsize: int = 30,
+    bins: int = 20,
+    min_count: int = 5,
+    jitter: tuple[float, float] | None = None,
+):
+    x, y = xy
+    x = np.asarray(x)
+    y = np.asarray(y)
+    if hexbin:
+        h, xedges, yedges = np.histogram2d(x, y, bins=gridsize)
+        h_safe = np.where(h >= min_count, h, 0)
+        return {
+            "x_centers": (xedges[:-1] + xedges[1:]) / 2,
+            "y_centers": (yedges[:-1] + yedges[1:]) / 2,
+            "counts": h_safe,
+        }
+    if bin_histogram:
+        h, edges = np.histogram(x, bins=bins)
+        h_safe = np.where(h >= min_count, h, 0)
+        return {"edges": edges, "counts": h_safe}
+    if jitter is not None:
+        rng = np.random.default_rng()
+        sd_x, sd_y = jitter
+        return (x + rng.normal(0, sd_x, size=len(x)),
+                y + rng.normal(0, sd_y, size=len(y)))
+    raise ValueError("Plot suppress requires one of: hexbin, bin_histogram, jitter")
 
 
 # ============================================================================

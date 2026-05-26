@@ -547,3 +547,38 @@ class TestSwap:
         out1 = p.swap(panel_df, "cost", method="rank", share=0.5, random_state=42)
         out2 = p.swap(panel_df, "cost", method="rank", share=0.5, random_state=42)
         pd.testing.assert_frame_equal(out1, out2)
+
+
+# ============================================================================
+# suppress (table)
+# ============================================================================
+
+
+class TestSuppressTable:
+    def test_min_n_suppresses_small_cells(self):
+        tab = pd.DataFrame({"value": [10, 2, 30, 1, 40]},
+                           index=["A", "B", "C", "D", "E"])
+        counts = pd.Series([10, 2, 30, 1, 40], index=tab.index)
+        out = p.suppress(tab, min_n=5, counts=counts)
+        assert pd.isna(out.loc["B", "value"])
+        assert pd.isna(out.loc["D", "value"])
+        assert out.loc["A", "value"] == 10
+
+    def test_round_table(self):
+        tab = pd.Series([13, 27, 41, 58, 73], index=list("ABCDE"))
+        out = p.suppress(tab, round=10)
+        assert all(v % 10 == 0 for v in out.dropna())
+
+    def test_fuzzy_count_ranges(self):
+        tab = pd.Series([2, 7, 15, 25, 50], index=list("ABCDE"))
+        out = p.suppress(tab, ranges=[(1, 4), (5, 9), (10, 19), (20, 99)])
+        assert out["A"] == "1-4"
+        assert out["B"] == "5-9"
+        assert out["D"] == "20-99"
+
+    def test_dominance_rule_suppresses_when_top_contributors_dominate(self):
+        tab = pd.DataFrame({"value": [1000, 500]}, index=["X", "Y"])
+        contributions = {"X": [800, 100, 100], "Y": [100, 100, 100, 100, 100]}
+        out = p.suppress(tab, dominance=(1, 0.7), contributions=contributions)
+        assert pd.isna(out.loc["X", "value"])
+        assert out.loc["Y", "value"] == 500
