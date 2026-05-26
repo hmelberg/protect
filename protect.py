@@ -1333,7 +1333,7 @@ def _suppress_table(
         if isinstance(out, pd.Series):
             out = out.map(_range_label)
         else:
-            out = out.applymap(_range_label)
+            out = out.map(_range_label)
 
     if secondary:
         out = _secondary_suppression(out)
