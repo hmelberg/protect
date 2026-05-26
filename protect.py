@@ -23,6 +23,8 @@ __all__ = [
     "jitter",
     "winsorize",
     "bin",
+    "year",
+    "month",
 ]
 
 
@@ -562,6 +564,67 @@ def _merge_sparse_bins(cat, min_count: int):
 # ============================================================================
 # Date verbs
 # ============================================================================
+
+
+def year(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    bin: int | None = None,
+    as_date: bool = False,
+    unit_id: str | None = None,
+    share: float = 1.0,
+) -> pd.DataFrame:
+    """Truncate dates to year resolution.
+
+    Default returns integer year. `as_date=True` returns a date floored to
+    January 1 of that year. `bin=N` produces N-year period labels like
+    "1990-1994".
+    """
+    columns = _validate_columns(data, columns)
+    out = data.copy()
+    for col in columns:
+        y = pd.to_datetime(out[col]).dt.year
+        if bin is None:
+            if as_date:
+                out[col] = pd.to_datetime(y.astype(str) + "-01-01")
+            else:
+                out[col] = y.astype(int)
+        else:
+            floor = (y // bin) * bin
+            ceil = floor + bin - 1
+            if as_date:
+                out[col] = pd.to_datetime(floor.astype(str) + "-01-01")
+            else:
+                out[col] = floor.astype(str) + "-" + ceil.astype(str)
+    return out
+
+
+def month(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    bin: int | None = None,
+    as_date: bool = False,
+    unit_id: str | None = None,
+    share: float = 1.0,
+) -> pd.DataFrame:
+    """Truncate dates to month resolution. `bin=3` groups into quarters."""
+    columns = _validate_columns(data, columns)
+    out = data.copy()
+    for col in columns:
+        dt = pd.to_datetime(out[col])
+        y = dt.dt.year
+        m = dt.dt.month
+        if bin is not None:
+            m = ((m - 1) // bin) * bin + 1
+        if as_date:
+            out[col] = pd.to_datetime(
+                y.astype(str) + "-" + m.astype(str).str.zfill(2) + "-01"
+            )
+        else:
+            out[col] = y.astype(str) + "-" + m.astype(str).str.zfill(2)
+    return out
 
 
 # ============================================================================

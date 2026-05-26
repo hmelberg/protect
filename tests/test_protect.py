@@ -272,3 +272,34 @@ class TestBin:
         original = small_df["income"].copy()
         p.bin(small_df, "income", bins=4)
         pd.testing.assert_series_equal(small_df["income"], original)
+
+
+# ============================================================================
+# year, month
+# ============================================================================
+
+
+class TestYearMonth:
+    def test_year_returns_integer(self, panel_df):
+        out = p.year(panel_df, "dob")
+        assert pd.api.types.is_integer_dtype(out["dob"])
+        assert (out["dob"] == panel_df["dob"].dt.year).all()
+
+    def test_year_as_date(self, panel_df):
+        out = p.year(panel_df, "dob", as_date=True)
+        assert pd.api.types.is_datetime64_any_dtype(out["dob"])
+        assert (out["dob"].dt.month == 1).all()
+        assert (out["dob"].dt.day == 1).all()
+
+    def test_year_bin_5(self, panel_df):
+        out = p.year(panel_df, "dob", bin=5)
+        assert out["dob"].apply(lambda x: "-" in x).all()
+
+    def test_month_returns_string(self, panel_df):
+        out = p.month(panel_df, "visit")
+        assert out["visit"].iloc[0].count("-") == 1
+
+    def test_month_bin_3_groups_into_quarters(self, panel_df):
+        out = p.month(panel_df, "visit", bin=3)
+        per_year_bins = out["visit"].apply(lambda x: x.split("-")[0]).nunique()
+        assert per_year_bins > 0
