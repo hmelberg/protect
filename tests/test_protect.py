@@ -396,3 +396,41 @@ class TestCollapse:
     def test_custom_other_label(self, panel_df):
         out = p.collapse(panel_df, "country", rare_below=5, other_label="Rare")
         assert "Rare" in out["country"].values or out["country"].value_counts().min() >= 5
+
+
+# ============================================================================
+# pseudonymize
+# ============================================================================
+
+
+class TestPseudonymize:
+    def test_random_method_returns_df_and_key(self, panel_df):
+        result = p.pseudonymize(panel_df, "pid", method="random", random_state=42)
+        assert isinstance(result, tuple)
+        df_out, key = result
+        assert isinstance(df_out, pd.DataFrame)
+        assert isinstance(key, dict)
+
+    def test_random_consistent_within_run(self, panel_df):
+        df_out, _ = p.pseudonymize(panel_df, "pid", method="random", random_state=42)
+        groups = df_out.groupby(panel_df["pid"])["pid"].nunique()
+        assert (groups == 1).all()
+
+    def test_random_changes_across_runs(self, panel_df):
+        out1, _ = p.pseudonymize(panel_df, "pid", method="random", random_state=42)
+        out2, _ = p.pseudonymize(panel_df, "pid", method="random", random_state=43)
+        assert not (out1["pid"] == out2["pid"]).all()
+
+    def test_hash_deterministic(self, panel_df):
+        out1, _ = p.pseudonymize(panel_df, "pid", method="hash", salt="secret")
+        out2, _ = p.pseudonymize(panel_df, "pid", method="hash", salt="secret")
+        pd.testing.assert_series_equal(out1["pid"], out2["pid"])
+
+    def test_hash_different_salts_differ(self, panel_df):
+        out1, _ = p.pseudonymize(panel_df, "pid", method="hash", salt="salt1")
+        out2, _ = p.pseudonymize(panel_df, "pid", method="hash", salt="salt2")
+        assert not (out1["pid"] == out2["pid"]).all()
+
+    def test_return_key_false(self, panel_df):
+        result = p.pseudonymize(panel_df, "pid", method="random", return_key=False, random_state=42)
+        assert isinstance(result, pd.DataFrame)

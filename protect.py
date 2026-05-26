@@ -28,6 +28,7 @@ __all__ = [
     "diff",
     "shorten",
     "collapse",
+    "pseudonymize",
 ]
 
 
@@ -862,6 +863,74 @@ def collapse(
 # ============================================================================
 # ID verb
 # ============================================================================
+
+
+def pseudonymize(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    method: str = "random",
+    salt: str | None = None,
+    return_key: bool = True,
+    key_path: str | None = None,
+    prefix: str = "P",
+    random_state: int | np.random.Generator | None = None,
+):
+    """Replace IDs (random or deterministic hash).
+
+    method='random' : random new IDs, key dict returned (different per run unless seeded)
+    method='hash'   : deterministic hash with `salt` (stable across runs that share salt)
+
+    Returns (df, key) when return_key=True (default), otherwise just df.
+
+    key_path persists the key to a JSON file (warning logged about co-location).
+    """
+    columns = _validate_columns(data, columns)
+    out = data.copy()
+    keys: dict[str, dict] = {}
+
+    if method == "random":
+        rng = _resolve_random_state(random_state)
+        for col in columns:
+            uniques = list(out[col].unique())
+            order = rng.permutation(len(uniques))
+            mapping = {
+                uniques[i]: f"{prefix}{order[i] + 1:06d}"
+                for i in range(len(uniques))
+            }
+            out[col] = out[col].map(mapping)
+            keys[col] = mapping
+    elif method == "hash":
+        if salt is None:
+            warnings.warn(
+                "pseudonymize(method='hash') without salt is weak; "
+                "provide a salt for production use",
+                stacklevel=2,
+            )
+        salt_bytes = (salt or "").encode("utf-8")
+        for col in columns:
+            def _h(v, _salt=salt_bytes):
+                if pd.isna(v):
+                    return v
+                h = hashlib.blake2b(str(v).encode("utf-8") + _salt, digest_size=8)
+                return prefix + h.hexdigest()
+            out[col] = out[col].map(_h)
+            keys[col] = {"method": "hash", "salt_provided": salt is not None}
+    else:
+        raise ValueError(f"Unknown pseudonymize method: {method!r}")
+
+    if key_path is not None:
+        warnings.warn(
+            f"Persisting pseudonymization key to {key_path}; "
+            "store it separately from the data",
+            stacklevel=2,
+        )
+        with open(key_path, "w") as f:
+            json.dump(keys, f, indent=2, default=str)
+
+    if return_key:
+        return out, keys
+    return out
 
 
 # ============================================================================
