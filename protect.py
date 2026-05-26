@@ -33,6 +33,8 @@ __all__ = [
     "eliminate",
     "swap",
     "suppress",
+    "risk",
+    "RiskReport",
 ]
 
 
@@ -1444,6 +1446,122 @@ def _suppress_plot(
 # ============================================================================
 # Risk
 # ============================================================================
+
+
+@dataclass
+class RiskReport:
+    """Disclosure-risk metrics for a set of quasi-identifiers."""
+    k_min: int
+    k_median: float
+    k_below_5: int
+    units_at_risk: int
+    l_min: float | None
+    l_median: float | None
+    t_max: float | None
+    distinct_combos: int
+    suggestions: list[str]
+
+    def describe(self) -> str:
+        """Return a plain-English summary."""
+        lines = [
+            f"k-anonymity: min={self.k_min}, median={self.k_median:.1f}",
+            f"  records with k<5: {self.k_below_5}",
+            f"  unique units on quasi-IDs: {self.units_at_risk}",
+            f"  distinct QI combinations: {self.distinct_combos}",
+        ]
+        if self.l_min is not None:
+            lines.append(f"l-diversity: min={self.l_min:.2f}, median={self.l_median:.2f}")
+        if self.t_max is not None:
+            lines.append(f"t-closeness: max={self.t_max:.3f}")
+        if self.suggestions:
+            lines.append("Suggestions:")
+            for s in self.suggestions:
+                lines.append(f"  - {s}")
+        return "\n".join(lines)
+
+    def diff(self, other: "RiskReport") -> dict:
+        """Return before/after pairs for key metrics."""
+        return {
+            "k_min": (self.k_min, other.k_min),
+            "k_median": (self.k_median, other.k_median),
+            "k_below_5": (self.k_below_5, other.k_below_5),
+            "units_at_risk": (self.units_at_risk, other.units_at_risk),
+            "distinct_combos": (self.distinct_combos, other.distinct_combos),
+        }
+
+
+def risk(
+    data: pd.DataFrame,
+    *,
+    quasi_ids: Sequence[str],
+    sensitive: Sequence[str] | None = None,
+    unit_id: str | None = None,
+) -> RiskReport:
+    """Compute disclosure-risk metrics for a set of quasi-identifiers.
+
+    Returns a RiskReport with k-anonymity, l-diversity (if `sensitive` given),
+    uniqueness counts, and heuristic suggestions.
+    """
+    quasi_ids = list(quasi_ids)
+    sensitive = list(sensitive) if sensitive else None
+
+    # Per-unit projection: each unit counted once on its (assumed-invariant) quasi_ids
+    if unit_id is not None:
+        proj = data.groupby(unit_id)[quasi_ids].first().reset_index()
+        eq_classes = proj.groupby(quasi_ids).size()
+    else:
+        eq_classes = data.groupby(quasi_ids).size()
+
+    k_min = int(eq_classes.min())
+    k_median = float(eq_classes.median())
+    k_below_5 = int((eq_classes < 5).sum())
+    units_at_risk = int((eq_classes == 1).sum())
+    distinct_combos = int(len(eq_classes))
+
+    l_min = l_median = None
+    t_max = None
+    if sensitive:
+        sens_col = sensitive[0]
+        l_vals = []
+        # iterate over equivalence classes; build mask from quasi_id tuple
+        for keys, _ in eq_classes.items():
+            if not isinstance(keys, tuple):
+                keys = (keys,)
+            mask = np.ones(len(data), dtype=bool)
+            for c, v in zip(quasi_ids, keys):
+                mask &= (data[c] == v).values
+            sub = data.loc[mask, sens_col]
+            if len(sub) == 0:
+                continue
+            probs = sub.value_counts(normalize=True).values
+            entropy = -np.sum(probs * np.log(np.clip(probs, 1e-12, 1)))
+            l_vals.append(np.exp(entropy))
+        if l_vals:
+            l_min = float(min(l_vals))
+            l_median = float(np.median(l_vals))
+
+    suggestions = []
+    if k_min < 5:
+        suggestions.append(
+            f"k_min={k_min} < 5: consider widening quasi-ID bins (bin, shorten, collapse) "
+            f"or suppressing rare combinations."
+        )
+    if units_at_risk > 0:
+        suggestions.append(
+            f"{units_at_risk} units are uniquely identifiable on these quasi-IDs."
+        )
+
+    return RiskReport(
+        k_min=k_min,
+        k_median=k_median,
+        k_below_5=k_below_5,
+        units_at_risk=units_at_risk,
+        l_min=l_min,
+        l_median=l_median,
+        t_max=t_max,
+        distinct_combos=distinct_combos,
+        suggestions=suggestions,
+    )
 
 
 # ============================================================================

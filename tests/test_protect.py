@@ -618,3 +618,41 @@ class TestSuppressPlot:
         assert "x_centers" in result
         assert "y_centers" in result
         assert "counts" in result
+
+
+# ============================================================================
+# risk
+# ============================================================================
+
+
+class TestRisk:
+    def test_risk_report_basic_metrics(self, panel_df):
+        report = p.risk(panel_df, quasi_ids=["sex", "zip"], unit_id="pid")
+        assert isinstance(report, p.RiskReport)
+        assert report.k_min >= 1
+        assert report.distinct_combos > 0
+
+    def test_units_at_risk(self, panel_df):
+        report = p.risk(panel_df, quasi_ids=["sex", "zip", "country"], unit_id="pid")
+        assert report.units_at_risk > 0
+
+    def test_l_diversity_with_sensitive(self, panel_df):
+        report = p.risk(panel_df, quasi_ids=["sex"], sensitive=["icd"], unit_id="pid")
+        assert report.l_min is not None
+        assert report.l_min > 0
+
+    def test_describe_returns_text(self, panel_df):
+        report = p.risk(panel_df, quasi_ids=["sex", "zip"], unit_id="pid")
+        text = report.describe()
+        assert isinstance(text, str)
+        assert "k" in text.lower()
+
+    def test_diff_two_reports(self, panel_df):
+        r1 = p.risk(panel_df, quasi_ids=["sex", "zip"], unit_id="pid")
+        # zip is a 5-digit string in the fixture; coerce to numeric so bin works
+        df_num = panel_df.copy()
+        df_num["zip"] = df_num["zip"].astype(int)
+        df2 = p.bin(df_num, "zip", bins=2)
+        r2 = p.risk(df2, quasi_ids=["sex", "zip"], unit_id="pid")
+        d = r1.diff(r2)
+        assert "k_min" in d
