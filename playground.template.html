@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>protect — playground</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.0/dist/css/tabulator_simple.min.css">
 <style>
   :root {
     --bg: #fafaf7;
@@ -18,6 +19,8 @@
     --code-bg: #f4f2ec;
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --diff-changed: #fff9c4;
+    --diff-new-col: #d6f5d6;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); }
@@ -31,24 +34,33 @@
   }
   header h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
   header .tag { font-family: var(--mono); color: var(--muted); font-size: 12px; }
-  header .status { margin-left: auto; font-family: var(--mono); font-size: 12px; padding: 4px 10px; border-radius: 4px; background: var(--code-bg); color: var(--muted); }
+  header .status { font-family: var(--mono); font-size: 12px; padding: 4px 10px; border-radius: 4px; background: var(--code-bg); color: var(--muted); }
   header .status.ready { background: #e2f0e2; color: var(--ok); }
   header .status.err { background: #f7e2de; color: var(--err); }
+  header .header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  header .guide-btn {
+    font-family: var(--sans); font-size: 12px; font-weight: 600;
+    padding: 5px 12px;
+    background: #fff; color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 4px;
+    cursor: pointer;
+  }
+  header .guide-btn:hover { background: var(--accent-soft); }
 
   .layout {
     display: grid;
-    grid-template-columns: 280px 1fr;
+    grid-template-columns: 1fr 280px;
     gap: 0;
     min-height: calc(100vh - 60px);
   }
   @media (max-width: 900px) {
     .layout { grid-template-columns: 1fr; }
-    aside { border-right: none !important; border-bottom: 1px solid var(--line); max-height: 360px; }
+    aside { border-left: none !important; border-top: 1px solid var(--line); max-height: 360px; }
   }
 
   aside {
     background: var(--panel);
-    border-right: 1px solid var(--line);
+    border-left: 1px solid var(--line);
     padding: 16px;
     overflow-y: auto;
   }
@@ -79,39 +91,83 @@
     min-width: 0;
   }
 
-  section.docs {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 18px 20px;
+  .brief {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0;
   }
-  section.docs h2 { margin: 0 0 8px 0; font-size: 16px; }
-  section.docs p { margin: 8px 0; color: #333; }
-  section.docs table { border-collapse: collapse; margin: 10px 0; font-size: 13px; }
-  section.docs th, section.docs td { text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-  section.docs th { color: var(--muted); font-weight: 600; }
-  section.docs code { font-family: var(--mono); background: var(--code-bg); padding: 1px 5px; border-radius: 3px; font-size: 12.5px; }
-  section.docs ul { margin: 8px 0; padding-left: 22px; }
-  section.docs li { margin: 4px 0; color: #333; }
-  details { margin-top: 8px; }
-  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .brief code {
+    font-family: var(--mono);
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+    color: var(--ink);
+  }
 
+  /* Welcome dialog */
+  dialog.welcome {
+    border: none;
+    border-radius: 10px;
+    padding: 0;
+    max-width: 640px;
+    width: calc(100% - 40px);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+  dialog.welcome::backdrop { background: rgba(20, 20, 20, 0.45); }
+  dialog.welcome .dlg-body { padding: 24px 28px 20px; }
+  dialog.welcome h2 { margin: 0 0 12px 0; font-size: 19px; }
+  dialog.welcome p { margin: 8px 0; color: #333; line-height: 1.55; }
+  dialog.welcome code {
+    font-family: var(--mono); background: var(--code-bg);
+    padding: 1px 5px; border-radius: 3px; font-size: 12.5px;
+  }
+  dialog.welcome .tip {
+    margin: 16px 0 4px;
+    padding: 12px 14px;
+    background: #fff8e1;
+    border-left: 3px solid #f5c542;
+    border-radius: 0 4px 4px 0;
+    font-size: 13px;
+  }
+  dialog.welcome .dlg-foot {
+    padding: 12px 20px;
+    border-top: 1px solid var(--line);
+    background: #faf9f5;
+    display: flex; justify-content: flex-end; gap: 10px;
+    border-radius: 0 0 10px 10px;
+  }
+  dialog.welcome button.got-it {
+    font-family: var(--sans); font-size: 13px; font-weight: 600;
+    padding: 7px 18px;
+    background: var(--accent); color: white;
+    border: none; border-radius: 4px;
+    cursor: pointer;
+  }
+  dialog.welcome button.got-it:hover { background: #194e8d; }
+
+  /* Editor card — bordered, on top */
   .editor-card {
     background: var(--panel);
-    border: 1px solid var(--line);
+    border: 1.5px solid var(--accent);
     border-radius: 8px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    box-shadow: 0 2px 10px rgba(31, 95, 168, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
   }
   .editor-bar {
     display: flex; align-items: center; gap: 10px;
     padding: 10px 14px;
     border-bottom: 1px solid var(--line);
     background: #f8f7f2;
+    flex-wrap: wrap;
   }
   .editor-bar h3 { margin: 0; font-size: 13px; font-weight: 600; }
   .editor-bar .spacer { flex: 1; }
+  .editor-bar .meta {
+    font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  }
   button.run {
     font-family: var(--sans); font-size: 13px; font-weight: 600;
     padding: 6px 16px;
@@ -189,21 +245,17 @@
     background: var(--panel);
   }
 
-  .data-card {
+  /* Slim dataset row (replaces the inline preview card) */
+  .dataset-row {
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 8px;
-    overflow: hidden;
-  }
-  .data-bar {
-    display: flex; align-items: center; gap: 10px;
     padding: 10px 14px;
-    border-bottom: 1px solid var(--line);
-    background: #f8f7f2;
+    display: flex; align-items: center; gap: 10px;
     flex-wrap: wrap;
   }
-  .data-bar h3 { margin: 0; font-size: 13px; font-weight: 600; }
-  .data-bar .info { font-family: var(--mono); font-size: 12px; color: var(--muted); flex: 1; min-width: 0; }
+  .dataset-row .label { font-size: 13px; font-weight: 600; }
+  .dataset-row .info { font-family: var(--mono); font-size: 12px; color: var(--muted); flex: 1; min-width: 0; }
   .upload-btn {
     display: inline-block;
     font-family: var(--sans); font-size: 12px; font-weight: 600;
@@ -213,33 +265,160 @@
   }
   .upload-btn:hover { background: #194e8d; }
   .upload-btn.disabled { background: #aaa; cursor: not-allowed; }
-  .data-preview {
-    padding: 14px;
-    max-height: 260px;
-    overflow: auto;
-  }
-  .data-preview .empty { color: var(--muted); font-family: var(--mono); font-size: 12.5px; }
-  .data-preview table {
-    border-collapse: collapse;
-    font-size: 12.5px;
-  }
-  .data-preview th, .data-preview td {
-    padding: 4px 10px;
-    border-bottom: 1px solid var(--line);
-    text-align: left;
-    white-space: nowrap;
-  }
-  .data-preview th {
-    background: var(--code-bg);
-    font-weight: 600;
-    position: sticky; top: 0;
-  }
-  .data-preview tbody tr:hover { background: #fafaf3; }
   .formats {
     font-family: var(--mono); font-size: 11px; color: var(--muted);
     width: 100%;
     margin-top: 2px;
   }
+
+  /* Data panels (Original / Transformed / Side-by-side / Stats / Compare) */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .panel > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 10px 14px;
+    background: #f8f7f2;
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13px; font-weight: 600;
+    user-select: none;
+  }
+  .panel > summary::-webkit-details-marker { display: none; }
+  .panel > summary::before {
+    content: "▶";
+    font-size: 10px;
+    color: var(--muted);
+    transition: transform 0.15s ease;
+    display: inline-block;
+  }
+  .panel[open] > summary::before { transform: rotate(90deg); }
+  .panel > summary .panel-meta {
+    font-weight: 400; color: var(--muted); font-family: var(--mono); font-size: 12px;
+  }
+  .panel > summary .spacer { flex: 1; }
+  .panel-body { padding: 0; }
+  .panel-body.padded { padding: 12px 14px; }
+  .panel-empty {
+    padding: 18px 14px;
+    color: var(--muted);
+    font-size: 13px;
+    font-style: italic;
+  }
+
+  /* Download dropdown — split button: main = CSV, chevron = menu (JSON). */
+  .dl-wrap { position: relative; display: inline-flex; }
+  .dl-wrap .dl-main, .dl-wrap .dl-toggle {
+    font-family: var(--sans); font-size: 12px;
+    padding: 5px 10px;
+    background: #fff; color: var(--ink);
+    border: 1px solid var(--line);
+    cursor: pointer;
+  }
+  .dl-wrap .dl-main { border-radius: 4px 0 0 4px; border-right: none; }
+  .dl-wrap .dl-toggle { border-radius: 0 4px 4px 0; padding: 5px 8px; }
+  .dl-wrap .dl-main:hover, .dl-wrap .dl-toggle:hover { background: var(--code-bg); }
+  .dl-menu {
+    position: absolute; top: 100%; right: 0;
+    margin-top: 2px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    min-width: 140px;
+    z-index: 10;
+    display: none;
+  }
+  .dl-menu.open { display: block; }
+  .dl-menu button {
+    display: block; width: 100%;
+    text-align: left;
+    padding: 6px 12px;
+    border: none; background: transparent;
+    font-family: var(--sans); font-size: 12px;
+    cursor: pointer;
+  }
+  .dl-menu button:hover { background: var(--code-bg); }
+
+  /* Side-by-side and Tabulator tweaks */
+  .toggle-only-changed {
+    font-family: var(--sans); font-size: 12px;
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .toggle-only-changed input { accent-color: var(--accent); }
+
+  .tab-host { padding: 0; }
+  .tabulator { font-family: var(--sans); font-size: 12.5px; }
+  .tabulator .tabulator-header { background: #f4f2ec; }
+  .tabulator .tabulator-col { background: #f4f2ec; }
+  .tabulator .diff-cell-changed { background: var(--diff-changed) !important; }
+  .tabulator .tabulator-col.diff-col-new {
+    background: var(--diff-new-col) !important;
+  }
+  .tabulator .tabulator-col.diff-col-dropped {
+    text-decoration: line-through;
+    color: var(--muted);
+  }
+
+  /* Summary stats HTML table */
+  .stats-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .stats-table th, .stats-table td { padding: 5px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+  .stats-table th { background: var(--code-bg); font-weight: 600; position: sticky; top: 0; }
+  .stats-table tr.col-group-start td { border-top: 2px solid var(--line); }
+  .stats-table td.metric { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  .stats-table td.delta-pos { color: var(--ok); font-family: var(--mono); }
+  .stats-table td.delta-neg { color: var(--err); font-family: var(--mono); }
+  .stats-table td.delta-zero { color: var(--muted); font-family: var(--mono); }
+  .stats-table td.num { font-family: var(--mono); font-size: 12px; }
+  .stats-row-banner {
+    padding: 8px 14px;
+    background: #f4f2ec;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink);
+  }
+
+  /* Compare-code area */
+  .compare-card .editor-bar { background: #f8f7f2; }
+  textarea#compare-editor {
+    width: 100%;
+    min-height: 120px;
+    padding: 10px 14px;
+    border: none;
+    outline: none;
+    resize: vertical;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    background: #fdfcf7;
+    color: var(--ink);
+    tab-size: 4;
+  }
+  #compare-output {
+    padding: 12px 14px;
+    border-top: 1px solid var(--line);
+    min-height: 40px;
+    max-height: 360px;
+    overflow: auto;
+  }
+  #compare-output pre {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  #compare-output .stderr { color: var(--err); }
+  #compare-output table { border-collapse: collapse; font-size: 12.5px; }
+  #compare-output th, #compare-output td { padding: 4px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+  #compare-output th { background: var(--code-bg); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -247,66 +426,52 @@
 <header>
   <h1>protect</h1>
   <span class="tag">statistical disclosure control · in-browser playground</span>
-  <span id="status" class="status">loading Pyodide…</span>
+  <div class="header-right">
+    <span id="status" class="status">loading Pyodide…</span>
+    <button id="guide-btn" class="guide-btn" type="button">Open guide ▸</button>
+  </div>
 </header>
 
+<dialog id="welcome-dialog" class="welcome">
+  <div class="dlg-body">
+    <h2>Welcome to the protect playground</h2>
+    <p>
+      <code>protect</code> is a Python package of statistical-disclosure-control (SDC) verbs for tabular
+      data and analytical outputs. It exposes 17 composable functions — value perturbation,
+      generalisation, suppression, and risk reporting — designed for health-research microdata
+      and result-release workflows.
+    </p>
+    <p>
+      This playground runs the package entirely in your browser via Pyodide; nothing leaves your
+      machine. A synthetic panel of 200 patients is pre-loaded as <code>df</code> (columns: pid,
+      visit, dob, sex, zip, country, icd, income, cost). Use <strong>Upload</strong> to load your
+      own data (CSV, TSV, JSON, Parquet, Excel — also gzipped).
+    </p>
+    <p>
+      Edit the code in the editor, then press <strong>Run</strong> (or Ctrl/⌘+Enter). The panels
+      below show the original data, the transformed result, a side-by-side diff, and summary
+      statistics. Click any verb on the right to drop a working snippet into the editor.
+    </p>
+    <div class="tip" id="welcome-tip"><strong>💡 Tip:</strong> <span id="welcome-tip-text">—</span></div>
+  </div>
+  <form method="dialog" class="dlg-foot">
+    <button value="ok" class="got-it" autofocus>Got it</button>
+  </form>
+</dialog>
+
 <div class="layout">
-  <aside>
-    <h2>verbs</h2>
-    <div id="verb-list"></div>
-  </aside>
-
   <main>
-    <section class="docs">
-      <h2>What is <code>protect</code>?</h2>
-      <p>
-        <code>protect</code> is a Python package of statistical-disclosure-control (SDC) verbs for tabular data and analytical outputs.
-        It exposes 17 composable functions — value perturbation, generalisation, suppression, and risk reporting — designed for
-        health-research microdata and result-release workflows. This playground runs the package entirely in your browser via Pyodide;
-        nothing leaves your machine.
-      </p>
-      <p>A synthetic panel-shaped dataset of 200 patients is pre-loaded as <code>df</code> (columns: pid, visit, dob, sex, zip, country, icd, income, cost). Use the <strong>Upload file</strong> button below to load your own data (CSV, TSV, JSON, Parquet, Excel — also gzipped). Files never leave your browser. <em>Feather/Arrow is not supported here</em> — Pyodide has no WebAssembly build of pyarrow; convert to Parquet first.</p>
-
-      <h3 style="margin:14px 0 6px;font-size:14px;">Universal arguments</h3>
-      <table>
-        <thead><tr><th>arg</th><th>type</th><th>meaning</th></tr></thead>
-        <tbody>
-          <tr><td><code>unit_id</code></td><td>str | None</td><td>Column that identifies an individual or unit. When set, share-based selection and per-unit draws operate at the unit level (one decision per person, broadcast to all their rows).</td></tr>
-          <tr><td><code>share</code></td><td>float in [0,1]</td><td>Fraction of units (or rows when <code>unit_id</code> is None) to perturb. <code>share=1.0</code> means "all"; <code>share=0.1</code> means "10%".</td></tr>
-          <tr><td><code>random_state</code></td><td>int | Generator | None</td><td>Seed or numpy Generator for reproducibility.</td></tr>
-        </tbody>
-      </table>
-
-      <details>
-        <summary>Caveats &amp; notes</summary>
-        <ul>
-          <li>Pseudonymisation is not anonymisation — see <code>BACKGROUND.md</code> for the long version.</li>
-          <li>Default scales (e.g. <code>noise(scale="auto")</code>) are conservative starting points, not policy recommendations.</li>
-          <li><code>risk</code> reports k-anonymity / uniqueness on the supplied quasi-identifiers only; combine with <code>suppress</code> and the value-level verbs for release.</li>
-          <li><code>protect</code> applies a recipe in dictionary order — composition matters.</li>
-          <li>Re-run the same code with different <code>random_state</code> values to see noise-driven variability.</li>
-        </ul>
-      </details>
-    </section>
-
-    <section class="data-card">
-      <div class="data-bar">
-        <h3>dataset</h3>
-        <span class="info" id="dataset-info">— (waiting for Pyodide)</span>
-        <label class="upload-btn disabled" id="upload-label" for="upload-input">Upload file</label>
-        <input id="upload-input" type="file" accept=".csv,.tsv,.txt,.json,.parquet,.pq,.xlsx,.xls,.gz" style="display:none" disabled>
-        <button class="secondary" id="reset-data-btn" disabled>Sample data</button>
-        <span class="formats">Accepted: .csv, .tsv, .txt, .json, .parquet, .xlsx, .xls — also gzipped (.csv.gz, .tsv.gz, .json.gz). Parquet/Excel readers install on demand (fastparquet, openpyxl, xlrd). Feather/Arrow is unavailable in Pyodide — convert to Parquet first.</span>
-      </div>
-      <div id="data-preview" class="data-preview"><span class="empty">No data loaded yet.</span></div>
-    </section>
+    <p class="brief">
+      Edit Python on the left, press <strong>Run</strong>, then compare the original and transformed
+      data below. The dataset never leaves your browser.
+    </p>
 
     <div class="editor-card">
       <div class="editor-bar">
         <h3>editor</h3>
-        <span class="meta" style="font-family:var(--mono);font-size:12px;color:var(--muted);">Ctrl/⌘+Enter to run</span>
         <span class="spacer"></span>
-        <button class="secondary" id="reset-btn" title="restore the starter example">reset</button>
+        <span class="meta">Ctrl/⌘+Enter to run</span>
+        <button class="secondary" id="reset-btn" title="restore the starter example">reset starter</button>
         <button class="run" id="run-btn" disabled>Run ▸</button>
       </div>
       <textarea id="editor" spellcheck="false"></textarea>
@@ -319,11 +484,113 @@
       </div>
       <div id="output"><pre class="stdout">(no output yet — click Run)</pre></div>
     </div>
+
+    <div class="dataset-row">
+      <span class="label">Dataset:</span>
+      <span class="info" id="dataset-info">— (waiting for Pyodide)</span>
+      <label class="upload-btn disabled" id="upload-label" for="upload-input">↑ Upload</label>
+      <input id="upload-input" type="file" accept=".csv,.tsv,.txt,.json,.parquet,.pq,.xlsx,.xls,.gz" style="display:none" disabled>
+      <button class="secondary" id="reset-data-btn" disabled>↺ Sample</button>
+      <span class="formats">Accepted: .csv, .tsv, .txt, .json, .parquet, .xlsx, .xls — also gzipped (.csv.gz, .tsv.gz, .json.gz). Parquet/Excel readers install on demand. Feather/Arrow is unavailable in Pyodide — convert to Parquet first.</span>
+    </div>
+
+    <details class="panel" id="panel-original" open>
+      <summary>
+        Original data
+        <span class="panel-meta" id="panel-original-meta"></span>
+        <span class="spacer"></span>
+        <span class="dl-wrap" data-target="original">
+          <button class="dl-main" type="button" title="Download CSV">↓ CSV</button>
+          <button class="dl-toggle" type="button" title="More formats">▾</button>
+          <div class="dl-menu">
+            <button type="button" data-fmt="csv">Download CSV</button>
+            <button type="button" data-fmt="json">Download JSON</button>
+          </div>
+        </span>
+      </summary>
+      <div class="panel-body">
+        <div id="table-original" class="tab-host"></div>
+      </div>
+    </details>
+
+    <details class="panel" id="panel-transformed" open>
+      <summary>
+        Transformed data
+        <span class="panel-meta" id="panel-transformed-meta"></span>
+        <span class="spacer"></span>
+        <span class="dl-wrap" data-target="transformed">
+          <button class="dl-main" type="button" title="Download CSV">↓ CSV</button>
+          <button class="dl-toggle" type="button" title="More formats">▾</button>
+          <div class="dl-menu">
+            <button type="button" data-fmt="csv">Download CSV</button>
+            <button type="button" data-fmt="json">Download JSON</button>
+          </div>
+        </span>
+      </summary>
+      <div class="panel-body">
+        <div id="table-transformed" class="tab-host"></div>
+        <div id="transformed-empty" class="panel-empty" style="display:none;">
+          Run something in the editor to see the transformed result here.
+        </div>
+      </div>
+    </details>
+
+    <details class="panel" id="panel-sidebyside" open>
+      <summary>
+        Side-by-side comparison
+        <span class="panel-meta" id="panel-sbs-meta"></span>
+        <span class="spacer"></span>
+        <label class="toggle-only-changed" onclick="event.stopPropagation();">
+          <input type="checkbox" id="only-changed-toggle"> only changed rows
+        </label>
+      </summary>
+      <div class="panel-body">
+        <div id="table-sidebyside" class="tab-host"></div>
+        <div id="sidebyside-empty" class="panel-empty">
+          Run something in the editor to see a side-by-side comparison.
+        </div>
+      </div>
+    </details>
+
+    <details class="panel" id="panel-stats" open>
+      <summary>
+        Summary statistics
+        <span class="panel-meta" id="panel-stats-meta"></span>
+      </summary>
+      <div class="panel-body">
+        <div id="stats-host"></div>
+        <div id="stats-empty" class="panel-empty">
+          Run something in the editor to see per-column metrics.
+        </div>
+      </div>
+    </details>
+
+    <details class="panel compare-card" id="panel-compare">
+      <summary>
+        Custom compare code
+        <span class="panel-meta">— uses <code style="font-family:var(--mono);font-size:11.5px;">df_before</code> and <code style="font-family:var(--mono);font-size:11.5px;">df_after</code></span>
+      </summary>
+      <div class="panel-body">
+        <div class="editor-bar">
+          <span class="meta" style="font-family:var(--mono);font-size:11.5px;color:var(--muted);">Code runs against the last Original/Transformed pair.</span>
+          <span class="spacer"></span>
+          <button class="run" id="compare-run-btn" type="button" disabled>Run ▸</button>
+        </div>
+        <textarea id="compare-editor" spellcheck="false"></textarea>
+        <div id="compare-output"><pre class="stdout">(no output yet)</pre></div>
+      </div>
+    </details>
   </main>
+
+  <aside>
+    <h2>verbs</h2>
+    <div id="verb-list"></div>
+  </aside>
 </div>
 
 <footer>
-  Powered by <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>.
+  Powered by <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>
+  and <a href="https://tabulator.info/" target="_blank" rel="noopener">Tabulator</a>.
   Source: <code>protect.py</code> — see <code>README.md</code> and <code>BACKGROUND.md</code> in the repo.
 </footer>
 
@@ -332,10 +599,57 @@
 {{PROTECT_PY_SOURCE}}
 </script>
 
-<!-- Bootstrap code -->
+<!-- Tabulator (loaded as a regular <script>, before our bootstrap) -->
 <script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.0/dist/js/tabulator.min.js"></script>
+
+<!-- Bootstrap code -->
 <script>
 "use strict";
+
+// ----------------------------------------------------------------------
+// Welcome dialog + tips
+// ----------------------------------------------------------------------
+const TIPS = [
+  "<code>noise(scale='auto')</code> uses 5% of column SD per column by default.",
+  "Use <code>shorten(sep='.')</code> to truncate ICD codes at the decimal point.",
+  "<code>risk()</code> requires <code>quasi_ids</code> — no auto-detect, because the right answer depends on your threat model.",
+  "Set <code>unit_id='pid'</code> to make perturbations consistent across all rows of one person.",
+  "<code>collapse(rare_below=5)</code> keeps a value as 'Other' — <code>eliminate(rare_below=5)</code> drops it. Pick by intent.",
+  "<code>pseudonymize(method='hash', salt='your_salt')</code> is deterministic; <code>method='random'</code> is not.",
+  "<code>protect()</code> with a <code>recipe</code> dict applies many verbs in order and returns an audit log.",
+  "Use <code>profile(df, 'safe_harbor', ...)</code> for HIPAA-aligned defaults.",
+  "After a run, the <em>Transformed data</em> panel can download the result as CSV or JSON.",
+  "Toggle &lsquo;only changed rows&rsquo; on the side-by-side panel to focus on what actually changed.",
+  "The custom compare code area has <code>df_before</code> and <code>df_after</code> in scope — useful for ad-hoc deltas.",
+  "Files you upload never leave your browser.",
+];
+
+const welcomeDialog = document.getElementById("welcome-dialog");
+const welcomeTipText = document.getElementById("welcome-tip-text");
+const guideBtn = document.getElementById("guide-btn");
+
+function setRandomTip() {
+  const tip = TIPS[Math.floor(Math.random() * TIPS.length)];
+  welcomeTipText.innerHTML = tip;
+}
+
+function openWelcome() {
+  setRandomTip();
+  if (typeof welcomeDialog.showModal === "function") {
+    welcomeDialog.showModal();
+  } else {
+    welcomeDialog.setAttribute("open", "");
+  }
+}
+
+guideBtn.addEventListener("click", openWelcome);
+
+// Open on first load (after a short delay so the layout has settled).
+window.addEventListener("DOMContentLoaded", () => {
+  // Defer slightly so the user sees the page chrome before the modal pops.
+  setTimeout(openWelcome, 150);
+});
 
 // ----------------------------------------------------------------------
 // Verb catalogue (name, one-line description, example code)
@@ -424,10 +738,17 @@ df_out.head()` },
 
 // Starter example shown on first load.
 const STARTER = `# Welcome — \`df\` is already loaded (200 patients, 9 columns).
-# Try this, then poke at any verb on the left.
+# Try this, then poke at any verb on the right.
 
 out = protect.noise(df, "income", scale=1000, random_state=42)
 out.head()
+`;
+
+// Default compare-code snippet.
+const COMPARE_STARTER = `# \`df_before\` and \`df_after\` are available here.
+# Try comparing summary metrics, or filter for specific changes.
+
+(df_after["income"].mean() - df_before["income"].mean())
 `;
 
 // ----------------------------------------------------------------------
@@ -440,6 +761,9 @@ const resetBtn = document.getElementById("reset-btn");
 const outputEl = document.getElementById("output");
 const outputMeta = document.getElementById("output-meta");
 const verbList = document.getElementById("verb-list");
+const compareEditor = document.getElementById("compare-editor");
+const compareRunBtn = document.getElementById("compare-run-btn");
+const compareOutput = document.getElementById("compare-output");
 
 // ----------------------------------------------------------------------
 // Render verb list
@@ -463,6 +787,7 @@ for (const v of VERBS) {
 }
 
 editor.value = STARTER;
+compareEditor.value = COMPARE_STARTER;
 resetBtn.addEventListener("click", () => { editor.value = STARTER; editor.focus(); });
 
 // ----------------------------------------------------------------------
@@ -508,6 +833,328 @@ function appendText(text) {
 }
 
 // ----------------------------------------------------------------------
+// Tabulator instances
+// ----------------------------------------------------------------------
+let tableOriginal = null;
+let tableTransformed = null;
+let tableSideBySide = null;
+
+const transformedEmpty = document.getElementById("transformed-empty");
+const sidebysideEmpty = document.getElementById("sidebyside-empty");
+const statsEmpty = document.getElementById("stats-empty");
+const statsHost = document.getElementById("stats-host");
+const panelOriginalMeta = document.getElementById("panel-original-meta");
+const panelTransformedMeta = document.getElementById("panel-transformed-meta");
+const panelSbsMeta = document.getElementById("panel-sbs-meta");
+const panelStatsMeta = document.getElementById("panel-stats-meta");
+const onlyChangedToggle = document.getElementById("only-changed-toggle");
+
+// Build a Tabulator columns array from a list of column names + (optional) dtypes.
+function buildColumns(names, dtypes) {
+  return names.map((name, i) => {
+    const dt = dtypes ? dtypes[i] : "";
+    const col = {
+      title: String(name),
+      field: String(name),
+      headerSort: true,
+      resizable: true,
+    };
+    if (dt && (dt.includes("int") || dt.includes("float"))) {
+      col.hozAlign = "right";
+      col.sorter = "number";
+    }
+    return col;
+  });
+}
+
+function renderTabulator(hostId, data, columns) {
+  const host = document.getElementById(hostId);
+  // Destroy previous instance, if any.
+  if (host._tab) {
+    try { host._tab.destroy(); } catch (e) { /* ignore */ }
+    host._tab = null;
+  }
+  host.innerHTML = "";
+  const table = new Tabulator(host, {
+    data: data,
+    columns: columns,
+    layout: "fitDataStretch",
+    pagination: "local",
+    paginationSize: 25,
+    paginationSizeSelector: [10, 25, 50, 100],
+    height: 360,
+    movableColumns: true,
+    headerSort: true,
+    placeholder: "no rows",
+  });
+  host._tab = table;
+  return table;
+}
+
+// Replace NaN sentinels coming from Python (we serialize NaN as None on the Py
+// side, which becomes null in JS). Tabulator handles null fine.
+function dictsFromProxy(proxy) {
+  // Convert a Pyodide proxy that wraps a Python list-of-dicts into plain JS.
+  return proxy.toJs({ dict_converter: Object.fromEntries });
+}
+
+// ----------------------------------------------------------------------
+// Render the Original panel from the global df.
+// ----------------------------------------------------------------------
+function renderOriginalPanel() {
+  if (!pyodide) return;
+  try {
+    const fn = pyodide.globals.get("__protect_table_payload");
+    const proxy = fn("original");
+    const result = proxy.toJs({ dict_converter: Object.fromEntries });
+    proxy.destroy();
+    fn.destroy();
+    if (!result || !result.rows) {
+      panelOriginalMeta.textContent = "— (no data)";
+      return;
+    }
+    const cols = buildColumns(result.columns, result.dtypes);
+    tableOriginal = renderTabulator("table-original", result.rows, cols);
+    panelOriginalMeta.textContent = `${result.shape[0]} rows × ${result.shape[1]} cols`;
+  } catch (err) {
+    console.error("renderOriginalPanel failed", err);
+    panelOriginalMeta.textContent = "render failed";
+  }
+}
+
+function renderTransformedPanel() {
+  if (!pyodide) return;
+  try {
+    const fn = pyodide.globals.get("__protect_table_payload");
+    const proxy = fn("transformed");
+    const result = proxy.toJs({ dict_converter: Object.fromEntries });
+    proxy.destroy();
+    fn.destroy();
+    if (!result || !result.has_data) {
+      // No transformed result yet.
+      if (tableTransformed) {
+        try { tableTransformed.destroy(); } catch (e) { /* ignore */ }
+        tableTransformed = null;
+      }
+      document.getElementById("table-transformed").innerHTML = "";
+      transformedEmpty.style.display = "";
+      panelTransformedMeta.textContent = "— run something first";
+      return;
+    }
+    transformedEmpty.style.display = "none";
+    const cols = buildColumns(result.columns, result.dtypes);
+    tableTransformed = renderTabulator("table-transformed", result.rows, cols);
+    panelTransformedMeta.textContent = `${result.shape[0]} rows × ${result.shape[1]} cols`;
+  } catch (err) {
+    console.error("renderTransformedPanel failed", err);
+    panelTransformedMeta.textContent = "render failed";
+  }
+}
+
+function renderSideBySidePanel() {
+  if (!pyodide) return;
+  try {
+    const fn = pyodide.globals.get("__protect_sidebyside_payload");
+    const proxy = fn();
+    const result = proxy.toJs({ dict_converter: Object.fromEntries });
+    proxy.destroy();
+    fn.destroy();
+    const host = document.getElementById("table-sidebyside");
+    if (!result || !result.has_data) {
+      if (tableSideBySide) {
+        try { tableSideBySide.destroy(); } catch (e) { /* ignore */ }
+        tableSideBySide = null;
+      }
+      host.innerHTML = "";
+      sidebysideEmpty.style.display = "";
+      panelSbsMeta.textContent = "— run something first";
+      return;
+    }
+    sidebysideEmpty.style.display = "none";
+
+    // Build column groups: [{col, status: "same"|"new"|"dropped"|"changed"}]
+    const columnGroups = [];
+    for (const c of result.columns) {
+      const group = {
+        title: c.name,
+        columns: [
+          {
+            title: "before",
+            field: c.field_before,
+            headerSort: true,
+            resizable: true,
+            cssClass: c.status === "dropped" ? "diff-col-dropped-cell" : "",
+          },
+          {
+            title: "after",
+            field: c.field_after,
+            headerSort: true,
+            resizable: true,
+            formatter: function(cell) {
+              const row = cell.getRow().getData();
+              const field = cell.getField();
+              const base = field.substring(0, field.length - 6); // strip "_after"
+              const beforeVal = row[base + "_before"];
+              const afterVal = cell.getValue();
+              if (!valuesEqual(beforeVal, afterVal)) {
+                cell.getElement().classList.add("diff-cell-changed");
+              }
+              return formatCell(afterVal);
+            },
+          },
+        ],
+      };
+      if (c.status === "new") {
+        group.cssClass = "diff-col-new";
+      } else if (c.status === "dropped") {
+        group.cssClass = "diff-col-dropped";
+      }
+      columnGroups.push(group);
+    }
+    // Include the _changed boolean field as a hidden column so we can filter it.
+    columnGroups.push({
+      title: "_changed",
+      field: "_changed",
+      visible: false,
+    });
+
+    if (tableSideBySide) {
+      try { tableSideBySide.destroy(); } catch (e) { /* ignore */ }
+    }
+    host.innerHTML = "";
+    tableSideBySide = new Tabulator(host, {
+      data: result.rows,
+      columns: columnGroups,
+      layout: "fitDataStretch",
+      pagination: "local",
+      paginationSize: 25,
+      paginationSizeSelector: [10, 25, 50, 100],
+      height: 400,
+      movableColumns: false,
+      headerSort: true,
+      placeholder: "no rows",
+    });
+    host._tab = tableSideBySide;
+    tableSideBySide.on("tableBuilt", applyOnlyChangedFilter);
+
+    panelSbsMeta.textContent = `${result.shape[0]} rows · ${result.changed_count} changed`;
+  } catch (err) {
+    console.error("renderSideBySidePanel failed", err);
+    panelSbsMeta.textContent = "render failed";
+  }
+}
+
+function applyOnlyChangedFilter() {
+  if (!tableSideBySide) return;
+  try {
+    if (onlyChangedToggle.checked) {
+      tableSideBySide.setFilter("_changed", "=", true);
+    } else {
+      tableSideBySide.clearFilter(true);
+    }
+  } catch (e) { /* table not yet built */ }
+}
+
+onlyChangedToggle.addEventListener("change", applyOnlyChangedFilter);
+
+// Compare values, treating NaN/null as equal to themselves.
+function valuesEqual(a, b) {
+  if (a === b) return true;
+  if (a === null && b === null) return true;
+  if (a == null && b == null) return true;
+  // Number NaN
+  if (typeof a === "number" && typeof b === "number" && isNaN(a) && isNaN(b)) return true;
+  return false;
+}
+
+function formatCell(v) {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "number" && isNaN(v)) return "";
+  return String(v);
+}
+
+function renderStatsPanel() {
+  if (!pyodide) return;
+  try {
+    const fn = pyodide.globals.get("__protect_render_summary");
+    const proxy = fn();
+    const result = proxy.toJs({ dict_converter: Object.fromEntries });
+    proxy.destroy();
+    fn.destroy();
+    if (!result || !result.has_data) {
+      statsHost.innerHTML = "";
+      statsEmpty.style.display = "";
+      panelStatsMeta.textContent = "— run something first";
+      return;
+    }
+    statsEmpty.style.display = "none";
+    statsHost.innerHTML = result.html;
+    panelStatsMeta.textContent = result.meta || "";
+  } catch (err) {
+    console.error("renderStatsPanel failed", err);
+    panelStatsMeta.textContent = "render failed";
+  }
+}
+
+// Refresh all panels (called after a run, upload, reset).
+function refreshAllPanels() {
+  renderOriginalPanel();
+  renderTransformedPanel();
+  renderSideBySidePanel();
+  renderStatsPanel();
+}
+
+// ----------------------------------------------------------------------
+// Download dropdowns
+// ----------------------------------------------------------------------
+document.querySelectorAll(".dl-wrap").forEach((wrap) => {
+  const target = wrap.getAttribute("data-target");
+  const main = wrap.querySelector(".dl-main");
+  const toggle = wrap.querySelector(".dl-toggle");
+  const menu = wrap.querySelector(".dl-menu");
+
+  function tableFor(target) {
+    if (target === "original") return tableOriginal;
+    if (target === "transformed") return tableTransformed;
+    return null;
+  }
+  function doDownload(fmt) {
+    const t = tableFor(target);
+    if (!t) return;
+    const fname = (target === "original" ? "original" : "transformed") + "." + fmt;
+    try { t.download(fmt, fname); } catch (e) { console.error("download failed", e); }
+  }
+  main.addEventListener("click", (e) => {
+    e.stopPropagation();
+    doDownload("csv");
+  });
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    // Close any other open menus
+    document.querySelectorAll(".dl-menu.open").forEach((m) => {
+      if (m !== menu) m.classList.remove("open");
+    });
+    menu.classList.toggle("open");
+  });
+  menu.querySelectorAll("button[data-fmt]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      menu.classList.remove("open");
+      doDownload(btn.getAttribute("data-fmt"));
+    });
+  });
+});
+
+document.addEventListener("click", () => {
+  document.querySelectorAll(".dl-menu.open").forEach((m) => m.classList.remove("open"));
+});
+
+// Prevent the download button row from toggling the <details> panel.
+document.querySelectorAll(".panel > summary .dl-wrap, .panel > summary .toggle-only-changed").forEach((el) => {
+  el.addEventListener("click", (e) => e.stopPropagation());
+});
+
+// ----------------------------------------------------------------------
 // Pyodide bootstrap
 // ----------------------------------------------------------------------
 let pyodide = null;
@@ -531,202 +1178,12 @@ async function bootstrap() {
     // Set up: import protect, build the sample dataframe, define a runner
     // function that captures stdout/stderr and the last expression value.
     setStatus("generating sample data…");
-    pyodide.runPython(`
-import sys
-sys.path.insert(0, "/home/pyodide")
-import numpy as np
-import pandas as pd
-import protect
-
-# Track the currently-loaded dataset's display name.
-__protect_dataset_name = "sample"
-
-
-def __protect_make_sample_df():
-    """Synthetic panel-shaped dataset, mirroring examples.py but smaller (200 patients)."""
-    rng = np.random.default_rng(42)
-    n_patients = 200
-    visits_per_patient = rng.integers(1, 6, size=n_patients)
-    countries = (["USA"] * 80 + ["UK"] * 40 + ["DE"] * 32 + ["IN"] * 24
-                 + ["NO"] * 16 + ["IS", "LI", "AD", "TV"] * 2)
-    rng.shuffle(countries)
-    rows = []
-    for i in range(n_patients):
-        pid = f"PT{i:05d}"
-        sex = rng.choice(["M", "F"])
-        dob = pd.Timestamp("1950-01-01") + pd.Timedelta(days=int(rng.integers(0, 25000)))
-        zip_ = f"{int(rng.integers(10000, 99999)):05d}"
-        income = float(rng.normal(60000, 20000))
-        for v in range(visits_per_patient[i]):
-            visit = pd.Timestamp("2020-01-01") + pd.Timedelta(days=int(rng.integers(0, 1500)))
-            icd = rng.choice(["I10", "I10.9", "E11.9", "C50.9", "Z00.00", "M54.5", "F32.9"])
-            cost = float(rng.normal(500, 200))
-            rows.append({"pid": pid, "visit": visit, "dob": dob, "sex": sex,
-                         "zip": zip_, "country": countries[i],
-                         "icd": icd, "income": income, "cost": cost})
-    return pd.DataFrame(rows).sort_values(["pid", "visit"]).reset_index(drop=True)
-
-
-df = __protect_make_sample_df()
-
-
-def __protect_load_file(path: str, fmt: str, name: str):
-    """Read a file from the Pyodide FS into a DataFrame and replace df.
-
-    Returns a status dict consumed by JS.
-    """
-    global df, __protect_dataset_name
-    try:
-        compression = "infer"  # pandas reads .csv.gz etc. automatically
-        if fmt == "csv":
-            new_df = pd.read_csv(path, compression=compression)
-        elif fmt == "tsv":
-            new_df = pd.read_csv(path, sep="\t", compression=compression)
-        elif fmt == "txt":
-            # try comma, then tab, then whitespace
-            try:
-                new_df = pd.read_csv(path, compression=compression)
-            except Exception:
-                new_df = pd.read_csv(path, sep=None, engine="python", compression=compression)
-        elif fmt == "json":
-            new_df = pd.read_json(path, compression=compression)
-        elif fmt in ("parquet", "pq"):
-            new_df = pd.read_parquet(path, engine="fastparquet")
-        elif fmt in ("xlsx", "xls"):
-            new_df = pd.read_excel(path)
-        else:
-            return {"error": f"unsupported format: .{fmt}"}
-    except Exception as exc:
-        return {"error": f"{type(exc).__name__}: {exc}"}
-
-    df = new_df
-    __protect_dataset_name = name
-    __protect_user_ns["df"] = new_df
-    return {
-        "rows": int(new_df.shape[0]),
-        "cols": int(new_df.shape[1]),
-        "name": name,
-        "columns": [str(c) for c in new_df.columns],
-        "dtypes": [str(t) for t in new_df.dtypes],
-    }
-
-
-def __protect_reset_data():
-    """Restore the sample synthetic panel as df."""
-    global df, __protect_dataset_name
-    df = __protect_make_sample_df()
-    __protect_dataset_name = "sample"
-    __protect_user_ns["df"] = df
-    return {
-        "rows": int(df.shape[0]),
-        "cols": int(df.shape[1]),
-        "name": "sample",
-    }
-
-
-def __protect_preview(n: int = 10):
-    """Return current df preview (HTML + summary) for display in the data panel.
-
-    Reads from the editor user namespace so that reassignments in the editor
-    (e.g. df = protect.noise(df, ...)) are reflected.
-    """
-    cur = __protect_user_ns.get("df", df)
-    if cur is None or (hasattr(cur, "empty") and cur.empty):
-        return {"html": "<span class='empty'>(empty dataframe)</span>",
-                "summary": "0 rows × 0 cols"}
-    if not isinstance(cur, pd.DataFrame):
-        return {"html": f"<span class='empty'>(df is {type(cur).__name__}, not a DataFrame)</span>",
-                "summary": "—"}
-    head = cur.head(n)
-    html = head.to_html(classes="dataframe", border=0, index=False, max_rows=n)
-    summary = f"{__protect_dataset_name} · {cur.shape[0]:,} rows × {cur.shape[1]} cols"
-    return {"html": html, "summary": summary}
-
-# Runner: execute user code, capture stdout/stderr, and evaluate the trailing
-# expression (Jupyter-like) for repr/HTML output.
-import ast, io, traceback, contextlib
-
-def __protect_run(source: str) -> dict:
-    out_buf = io.StringIO()
-    err_buf = io.StringIO()
-    result = {"stdout": "", "stderr": "", "value_html": None, "value_text": None,
-              "value_kind": None, "error": None}
-    user_ns = __protect_user_ns
-
-    try:
-        tree = ast.parse(source, mode="exec")
-    except SyntaxError:
-        result["error"] = traceback.format_exc()
-        return result
-
-    # Split: everything but the last node is exec'd; if last is Expr, eval it.
-    last_expr = None
-    body = tree.body
-    if body and isinstance(body[-1], ast.Expr):
-        last_expr = ast.Expression(body[-1].value)
-        body = body[:-1]
-    exec_mod = ast.Module(body=body, type_ignores=[])
-
-    try:
-        with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
-            if exec_mod.body:
-                exec(compile(exec_mod, "<editor>", "exec"), user_ns)
-            value = None
-            if last_expr is not None:
-                value = eval(compile(last_expr, "<editor>", "eval"), user_ns)
-    except BaseException:
-        result["stdout"] = out_buf.getvalue()
-        result["stderr"] = err_buf.getvalue()
-        result["error"] = traceback.format_exc()
-        return result
-
-    result["stdout"] = out_buf.getvalue()
-    result["stderr"] = err_buf.getvalue()
-
-    if value is None:
-        return result
-
-    # Render the trailing value.
-    try:
-        if isinstance(value, pd.DataFrame):
-            result["value_kind"] = "dataframe"
-            result["value_html"] = value.to_html(max_rows=50, classes="dataframe", border=0)
-            result["value_text"] = f"DataFrame: {value.shape[0]} rows × {value.shape[1]} cols"
-        elif isinstance(value, pd.Series):
-            result["value_kind"] = "series"
-            result["value_html"] = value.to_frame().to_html(max_rows=50, classes="dataframe", border=0)
-            result["value_text"] = f"Series[{value.name!r}]: {len(value)} entries"
-        elif hasattr(value, "_repr_html_"):
-            html = value._repr_html_()
-            if html:
-                result["value_kind"] = "html"
-                result["value_html"] = html
-            else:
-                result["value_kind"] = "text"
-                result["value_text"] = repr(value)
-        else:
-            result["value_kind"] = "text"
-            result["value_text"] = repr(value)
-    except Exception:
-        result["value_kind"] = "text"
-        result["value_text"] = "<unrenderable value>"
-
-    return result
-
-# Persistent namespace for the editor (so users can keep state between Runs).
-__protect_user_ns = {
-    "__name__": "__main__",
-    "__builtins__": __builtins__,
-    "np": np, "numpy": np,
-    "pd": pd, "pandas": pd,
-    "protect": protect,
-    "df": df,
-}
-`);
+    pyodide.runPython(PYTHON_BOOTSTRAP);
     pythonRunner = pyodide.globals.get("__protect_run");
 
     setStatus("ready · " + (pyodide.globals.get("df").shape[0]) + " rows loaded", "ready");
     runBtn.disabled = false;
+    compareRunBtn.disabled = false;
     uploadInput.disabled = false;
     resetDataBtn.disabled = false;
     uploadLabel.classList.remove("disabled");
@@ -734,14 +1191,551 @@ __protect_user_ns = {
     // Replace placeholder output with a friendly hint.
     outputEl.innerHTML = '<pre class="stdout">df is loaded — click Run, or press Ctrl/⌘+Enter.</pre>';
 
-    // Render the initial preview of the sample dataset.
-    refreshPreview();
+    // Render the initial panels.
+    refreshDatasetInfo();
+    refreshAllPanels();
   } catch (err) {
     console.error(err);
     setStatus("init failed: " + err.message, "err");
     appendStderr("Failed to initialise Pyodide:\n" + (err && err.stack ? err.stack : err));
   }
 }
+
+// The Python bootstrap is in a separate const so backticks-in-docstrings can't
+// confuse the template literal. NOTE: keep this string free of backticks.
+const PYTHON_BOOTSTRAP = [
+"import sys",
+"sys.path.insert(0, '/home/pyodide')",
+"import numpy as np",
+"import pandas as pd",
+"import protect",
+"import ast, io, traceback, contextlib",
+"",
+"__protect_dataset_name = 'sample'",
+"",
+"def __protect_make_sample_df():",
+"    rng = np.random.default_rng(42)",
+"    n_patients = 200",
+"    visits_per_patient = rng.integers(1, 6, size=n_patients)",
+"    countries = (['USA'] * 80 + ['UK'] * 40 + ['DE'] * 32 + ['IN'] * 24",
+"                 + ['NO'] * 16 + ['IS', 'LI', 'AD', 'TV'] * 2)",
+"    rng.shuffle(countries)",
+"    rows = []",
+"    for i in range(n_patients):",
+"        pid = 'PT' + format(i, '05d')",
+"        sex = rng.choice(['M', 'F'])",
+"        dob = pd.Timestamp('1950-01-01') + pd.Timedelta(days=int(rng.integers(0, 25000)))",
+"        zip_ = format(int(rng.integers(10000, 99999)), '05d')",
+"        income = float(rng.normal(60000, 20000))",
+"        for v in range(visits_per_patient[i]):",
+"            visit = pd.Timestamp('2020-01-01') + pd.Timedelta(days=int(rng.integers(0, 1500)))",
+"            icd = rng.choice(['I10', 'I10.9', 'E11.9', 'C50.9', 'Z00.00', 'M54.5', 'F32.9'])",
+"            cost = float(rng.normal(500, 200))",
+"            rows.append({'pid': pid, 'visit': visit, 'dob': dob, 'sex': sex,",
+"                         'zip': zip_, 'country': countries[i],",
+"                         'icd': icd, 'income': income, 'cost': cost})",
+"    return pd.DataFrame(rows).sort_values(['pid', 'visit']).reset_index(drop=True)",
+"",
+"# Three logical frames.",
+"original_df = __protect_make_sample_df()",
+"transformed_df = None",
+"df = original_df.copy()",
+"",
+"# Persistent namespace for the editor.",
+"__protect_user_ns = {",
+"    '__name__': '__main__',",
+"    '__builtins__': __builtins__,",
+"    'np': np, 'numpy': np,",
+"    'pd': pd, 'pandas': pd,",
+"    'protect': protect,",
+"    'df': df,",
+"}",
+"",
+"def __protect_load_file(path, fmt, name):",
+"    global original_df, transformed_df, df, __protect_dataset_name",
+"    try:",
+"        compression = 'infer'",
+"        if fmt == 'csv':",
+"            new_df = pd.read_csv(path, compression=compression)",
+"        elif fmt == 'tsv':",
+"            new_df = pd.read_csv(path, sep='\\t', compression=compression)",
+"        elif fmt == 'txt':",
+"            try:",
+"                new_df = pd.read_csv(path, compression=compression)",
+"            except Exception:",
+"                new_df = pd.read_csv(path, sep=None, engine='python', compression=compression)",
+"        elif fmt == 'json':",
+"            new_df = pd.read_json(path, compression=compression)",
+"        elif fmt in ('parquet', 'pq'):",
+"            new_df = pd.read_parquet(path, engine='fastparquet')",
+"        elif fmt in ('xlsx', 'xls'):",
+"            new_df = pd.read_excel(path)",
+"        else:",
+"            return {'error': 'unsupported format: .' + fmt}",
+"    except Exception as exc:",
+"        return {'error': type(exc).__name__ + ': ' + str(exc)}",
+"    original_df = new_df.copy()",
+"    transformed_df = None",
+"    df = new_df.copy()",
+"    __protect_dataset_name = name",
+"    __protect_user_ns['df'] = df",
+"    return {",
+"        'rows': int(new_df.shape[0]),",
+"        'cols': int(new_df.shape[1]),",
+"        'name': name,",
+"        'columns': [str(c) for c in new_df.columns],",
+"        'dtypes': [str(t) for t in new_df.dtypes],",
+"    }",
+"",
+"def __protect_reset_data():",
+"    global original_df, transformed_df, df, __protect_dataset_name",
+"    original_df = __protect_make_sample_df()",
+"    transformed_df = None",
+"    df = original_df.copy()",
+"    __protect_dataset_name = 'sample'",
+"    __protect_user_ns['df'] = df",
+"    return {",
+"        'rows': int(df.shape[0]),",
+"        'cols': int(df.shape[1]),",
+"        'name': 'sample',",
+"    }",
+"",
+"def __protect_state_summary():",
+"    return {",
+"        'has_original': original_df is not None,",
+"        'has_transformed': transformed_df is not None,",
+"        'original_shape': list(original_df.shape) if original_df is not None else None,",
+"        'transformed_shape': list(transformed_df.shape) if transformed_df is not None else None,",
+"        'dataset_name': __protect_dataset_name,",
+"    }",
+"",
+"def __protect_df_to_records(d, max_rows=None):",
+"    # Serialise a DataFrame to a list of dicts, NaN-safe and JSON-safe.",
+"    if d is None:",
+"        return [], [], []",
+"    if max_rows is not None and len(d) > max_rows:",
+"        d = d.head(max_rows)",
+"    safe = d.copy()",
+"    # Convert datetime columns to ISO strings so they serialise predictably.",
+"    for c in safe.columns:",
+"        if pd.api.types.is_datetime64_any_dtype(safe[c]):",
+"            safe[c] = safe[c].dt.strftime('%Y-%m-%d')",
+"        elif isinstance(safe[c].dtype, pd.PeriodDtype):",
+"            safe[c] = safe[c].astype(str)",
+"        elif pd.api.types.is_timedelta64_dtype(safe[c]):",
+"            safe[c] = safe[c].astype(str)",
+"    safe = safe.where(pd.notna(safe), None)",
+"    records = safe.to_dict(orient='records')",
+"    columns = [str(c) for c in d.columns]",
+"    dtypes = [str(t) for t in d.dtypes]",
+"    return records, columns, dtypes",
+"",
+"def __protect_table_payload(which):",
+"    if which == 'original':",
+"        d = original_df",
+"    elif which == 'transformed':",
+"        d = transformed_df",
+"    else:",
+"        return {'has_data': False}",
+"    if d is None:",
+"        return {'has_data': False}",
+"    rows, columns, dtypes = __protect_df_to_records(d, max_rows=2000)",
+"    return {",
+"        'has_data': True,",
+"        'rows': rows,",
+"        'columns': columns,",
+"        'dtypes': dtypes,",
+"        'shape': [int(d.shape[0]), int(d.shape[1])],",
+"    }",
+"",
+"def __protect_sidebyside_payload():",
+"    if original_df is None or transformed_df is None:",
+"        return {'has_data': False}",
+"    before = original_df",
+"    after = transformed_df",
+"    # Align on index using an outer merge.",
+"    b = before.copy()",
+"    a = after.copy()",
+"    b.index.name = b.index.name or '__idx'",
+"    a.index.name = a.index.name or '__idx'",
+"    all_cols = list(b.columns)",
+"    for c in a.columns:",
+"        if c not in all_cols:",
+"            all_cols.append(c)",
+"    b_cols = list(b.columns)",
+"    a_cols = list(a.columns)",
+"    # Reindex both to the union of indices.",
+"    idx = b.index.union(a.index)",
+"    b = b.reindex(idx)",
+"    a = a.reindex(idx)",
+"    # Serialise dates/timedeltas to strings for stable JSON.",
+"    def _stringify(d):",
+"        d = d.copy()",
+"        for c in d.columns:",
+"            if pd.api.types.is_datetime64_any_dtype(d[c]):",
+"                d[c] = d[c].dt.strftime('%Y-%m-%d')",
+"            elif isinstance(d[c].dtype, pd.PeriodDtype):",
+"                d[c] = d[c].astype(str)",
+"            elif pd.api.types.is_timedelta64_dtype(d[c]):",
+"                d[c] = d[c].astype(str)",
+"        return d",
+"    b = _stringify(b).where(pd.notna(b), None)",
+"    a = _stringify(a).where(pd.notna(a), None)",
+"    rows = []",
+"    changed_count = 0",
+"    MAX = 2000",
+"    for i in idx[:MAX]:",
+"        row = {'_idx': str(i)}",
+"        any_change = False",
+"        for c in all_cols:",
+"            bv = b.at[i, c] if c in b_cols else None",
+"            av = a.at[i, c] if c in a_cols else None",
+"            # Convert numpy scalars to plain Python.",
+"            try:",
+"                if hasattr(bv, 'item'): bv = bv.item()",
+"            except Exception:",
+"                pass",
+"            try:",
+"                if hasattr(av, 'item'): av = av.item()",
+"            except Exception:",
+"                pass",
+"            row[c + '_before'] = bv",
+"            row[c + '_after'] = av",
+"            if bv != av:",
+"                # NaN != NaN; treat both-NaN/None as equal.",
+"                if bv is None and av is None:",
+"                    pass",
+"                else:",
+"                    try:",
+"                        # Compare floats with NaN equality.",
+"                        import math",
+"                        if isinstance(bv, float) and isinstance(av, float) and math.isnan(bv) and math.isnan(av):",
+"                            pass",
+"                        else:",
+"                            any_change = True",
+"                    except Exception:",
+"                        any_change = True",
+"        row['_changed'] = any_change",
+"        if any_change:",
+"            changed_count += 1",
+"        rows.append(row)",
+"    cols_meta = []",
+"    for c in all_cols:",
+"        status = 'same'",
+"        if c not in b_cols:",
+"            status = 'new'",
+"        elif c not in a_cols:",
+"            status = 'dropped'",
+"        cols_meta.append({",
+"            'name': str(c),",
+"            'field_before': c + '_before',",
+"            'field_after': c + '_after',",
+"            'status': status,",
+"        })",
+"    return {",
+"        'has_data': True,",
+"        'rows': rows,",
+"        'columns': cols_meta,",
+"        'shape': [len(idx), len(all_cols)],",
+"        'changed_count': changed_count,",
+"    }",
+"",
+"def _fmt_num(v):",
+"    if v is None:",
+"        return '—'",
+"    if isinstance(v, float):",
+"        if pd.isna(v):",
+"            return '—'",
+"        if abs(v) >= 1000 or (abs(v) < 0.01 and v != 0):",
+"            return format(v, '.4g')",
+"        return format(v, '.3f').rstrip('0').rstrip('.')",
+"    return str(v)",
+"",
+"def _delta_class(b, a):",
+"    if b is None or a is None:",
+"        return 'delta-zero'",
+"    if isinstance(b, (int, float)) and isinstance(a, (int, float)):",
+"        if pd.isna(b) or pd.isna(a):",
+"            return 'delta-zero'",
+"        if a > b:",
+"            return 'delta-pos'",
+"        if a < b:",
+"            return 'delta-neg'",
+"    return 'delta-zero'",
+"",
+"def _delta_str(b, a):",
+"    if isinstance(b, (int, float)) and isinstance(a, (int, float)):",
+"        if pd.isna(b) or pd.isna(a):",
+"            return '—'",
+"        d = a - b",
+"        sign = '+' if d > 0 else ''",
+"        return sign + _fmt_num(d)",
+"    if b == a:",
+"        return '0'",
+"    return '—'",
+"",
+"def __protect_render_summary():",
+"    if original_df is None or transformed_df is None:",
+"        return {'has_data': False}",
+"    before = original_df",
+"    after = transformed_df",
+"    rows_html = []",
+"    # Top banner row for row-count delta.",
+"    row_delta = after.shape[0] - before.shape[0]",
+"    if row_delta != 0:",
+"        sign = '+' if row_delta > 0 else ''",
+"        direction = 'more' if row_delta > 0 else 'fewer'",
+"        banner = (",
+"            '<div class=\"stats-row-banner\">'",
+"            + 'Δ rows: ' + sign + str(row_delta)",
+"            + '  (transformed has ' + str(abs(row_delta)) + ' ' + direction + ' rows than original)'",
+"            + '</div>'",
+"        )",
+"    else:",
+"        banner = ''",
+"    all_cols = list(before.columns)",
+"    for c in after.columns:",
+"        if c not in all_cols:",
+"            all_cols.append(c)",
+"    rows_html.append('<table class=\"stats-table\"><thead><tr>'",
+"                     '<th>Column</th><th>Metric</th><th>Before</th><th>After</th><th>Δ</th>'",
+"                     '</tr></thead><tbody>')",
+"    first = True",
+"    for c in all_cols:",
+"        b_col = before[c] if c in before.columns else None",
+"        a_col = after[c] if c in after.columns else None",
+"        # Compute metric rows.",
+"        is_num_before = b_col is not None and pd.api.types.is_numeric_dtype(b_col)",
+"        is_num_after = a_col is not None and pd.api.types.is_numeric_dtype(a_col)",
+"        numeric = bool(is_num_before or is_num_after)",
+"        metrics = []",
+"        # rows",
+"        b_rows = int(b_col.shape[0]) if b_col is not None else None",
+"        a_rows = int(a_col.shape[0]) if a_col is not None else None",
+"        metrics.append(('rows', b_rows, a_rows))",
+"        # NaN count",
+"        b_nan = int(b_col.isna().sum()) if b_col is not None else None",
+"        a_nan = int(a_col.isna().sum()) if a_col is not None else None",
+"        metrics.append(('NaN', b_nan, a_nan))",
+"        # unique",
+"        b_uniq = int(b_col.nunique(dropna=True)) if b_col is not None else None",
+"        a_uniq = int(a_col.nunique(dropna=True)) if a_col is not None else None",
+"        metrics.append(('#unique', b_uniq, a_uniq))",
+"        if numeric:",
+"            try:",
+"                metrics.append(('mean', float(b_col.mean()) if b_col is not None and is_num_before else None, float(a_col.mean()) if a_col is not None and is_num_after else None))",
+"            except Exception:",
+"                pass",
+"            try:",
+"                metrics.append(('std', float(b_col.std()) if b_col is not None and is_num_before else None, float(a_col.std()) if a_col is not None and is_num_after else None))",
+"            except Exception:",
+"                pass",
+"            try:",
+"                metrics.append(('min', float(b_col.min()) if b_col is not None and is_num_before else None, float(a_col.min()) if a_col is not None and is_num_after else None))",
+"            except Exception:",
+"                pass",
+"            try:",
+"                metrics.append(('max', float(b_col.max()) if b_col is not None and is_num_before else None, float(a_col.max()) if a_col is not None and is_num_after else None))",
+"            except Exception:",
+"                pass",
+"        else:",
+"            try:",
+"                b_top = b_col.mode(dropna=True)",
+"                a_top = a_col.mode(dropna=True) if a_col is not None else None",
+"                b_top_v = str(b_top.iloc[0]) if b_col is not None and len(b_top) else None",
+"                a_top_v = str(a_top.iloc[0]) if a_col is not None and a_top is not None and len(a_top) else None",
+"                metrics.append(('top', b_top_v, a_top_v))",
+"            except Exception:",
+"                pass",
+"        col_label = str(c)",
+"        if c not in before.columns:",
+"            col_label = col_label + ' <span style=\"color:var(--ok);font-size:11px;\">(new)</span>'",
+"        elif c not in after.columns:",
+"            col_label = col_label + ' <span style=\"color:var(--muted);font-size:11px;text-decoration:line-through;\">(dropped)</span>'",
+"        first_metric = True",
+"        for (mname, bv, av) in metrics:",
+"            cls = _delta_class(bv, av)",
+"            delta = _delta_str(bv, av)",
+"            tr_cls = 'col-group-start' if first_metric else ''",
+"            label_td = '<td rowspan=\"' + str(len(metrics)) + '\"><strong>' + col_label + '</strong></td>' if first_metric else ''",
+"            rows_html.append(",
+"                '<tr class=\"' + tr_cls + '\">'",
+"                + label_td",
+"                + '<td class=\"metric\">' + mname + '</td>'",
+"                + '<td class=\"num\">' + _fmt_num(bv) + '</td>'",
+"                + '<td class=\"num\">' + _fmt_num(av) + '</td>'",
+"                + '<td class=\"' + cls + '\">' + delta + '</td>'",
+"                + '</tr>'",
+"            )",
+"            first_metric = False",
+"    rows_html.append('</tbody></table>')",
+"    html = banner + ''.join(rows_html)",
+"    return {",
+"        'has_data': True,",
+"        'html': html,",
+"        'meta': str(before.shape[1]) + ' columns before · ' + str(after.shape[1]) + ' columns after',",
+"    }",
+"",
+"def __protect_run(source):",
+"    out_buf = io.StringIO()",
+"    err_buf = io.StringIO()",
+"    result = {'stdout': '', 'stderr': '', 'value_html': None, 'value_text': None,",
+"              'value_kind': None, 'error': None}",
+"    user_ns = __protect_user_ns",
+"    # Snapshot known sentinels BEFORE the run so we can detect re-assignment.",
+"    sentinels = ['out', 'result', 'df_after', 'transformed']",
+"    prev = {k: user_ns.get(k, _NO_VAR) for k in sentinels}",
+"    prev_df = user_ns.get('df', _NO_VAR)",
+"    try:",
+"        tree = ast.parse(source, mode='exec')",
+"    except SyntaxError:",
+"        result['error'] = traceback.format_exc()",
+"        return result",
+"    last_expr = None",
+"    body = tree.body",
+"    if body and isinstance(body[-1], ast.Expr):",
+"        last_expr = ast.Expression(body[-1].value)",
+"        body = body[:-1]",
+"    exec_mod = ast.Module(body=body, type_ignores=[])",
+"    value = None",
+"    try:",
+"        with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):",
+"            if exec_mod.body:",
+"                exec(compile(exec_mod, '<editor>', 'exec'), user_ns)",
+"            if last_expr is not None:",
+"                value = eval(compile(last_expr, '<editor>', 'eval'), user_ns)",
+"    except BaseException:",
+"        result['stdout'] = out_buf.getvalue()",
+"        result['stderr'] = err_buf.getvalue()",
+"        result['error'] = traceback.format_exc()",
+"        return result",
+"    result['stdout'] = out_buf.getvalue()",
+"    result['stderr'] = err_buf.getvalue()",
+"    # Capture transformed_df.",
+"    global transformed_df, df",
+"    captured = None",
+"    for name in sentinels:",
+"        cur = user_ns.get(name, _NO_VAR)",
+"        if cur is _NO_VAR:",
+"            continue",
+"        if prev[name] is _NO_VAR or (id(cur) != id(prev[name])):",
+"            if isinstance(cur, pd.DataFrame):",
+"                captured = cur",
+"                break",
+"    if captured is None and isinstance(value, pd.DataFrame):",
+"        captured = value",
+"    if captured is None:",
+"        cur_df = user_ns.get('df', _NO_VAR)",
+"        if isinstance(cur_df, pd.DataFrame) and (prev_df is _NO_VAR or id(cur_df) != id(prev_df)):",
+"            captured = cur_df",
+"    if captured is not None:",
+"        transformed_df = captured.copy()",
+"    else:",
+"        transformed_df = None",
+"    df = user_ns.get('df', df)",
+"    # Render the trailing value (unchanged behaviour).",
+"    if value is None:",
+"        return result",
+"    try:",
+"        if isinstance(value, pd.DataFrame):",
+"            result['value_kind'] = 'dataframe'",
+"            result['value_html'] = value.to_html(max_rows=50, classes='dataframe', border=0)",
+"            result['value_text'] = 'DataFrame: ' + str(value.shape[0]) + ' rows × ' + str(value.shape[1]) + ' cols'",
+"        elif isinstance(value, pd.Series):",
+"            result['value_kind'] = 'series'",
+"            result['value_html'] = value.to_frame().to_html(max_rows=50, classes='dataframe', border=0)",
+"            result['value_text'] = 'Series[' + repr(value.name) + ']: ' + str(len(value)) + ' entries'",
+"        elif hasattr(value, '_repr_html_'):",
+"            html = value._repr_html_()",
+"            if html:",
+"                result['value_kind'] = 'html'",
+"                result['value_html'] = html",
+"            else:",
+"                result['value_kind'] = 'text'",
+"                result['value_text'] = repr(value)",
+"        else:",
+"            result['value_kind'] = 'text'",
+"            result['value_text'] = repr(value)",
+"    except Exception:",
+"        result['value_kind'] = 'text'",
+"        result['value_text'] = '<unrenderable value>'",
+"    return result",
+"",
+"# Sentinel object used for absence detection.",
+"class _NO_VAR_T: pass",
+"_NO_VAR = _NO_VAR_T()",
+"",
+"def __protect_run_compare(source):",
+"    out_buf = io.StringIO()",
+"    err_buf = io.StringIO()",
+"    result = {'stdout': '', 'stderr': '', 'value_html': None, 'value_text': None,",
+"              'value_kind': None, 'error': None}",
+"    if original_df is None:",
+"        result['error'] = 'No original data loaded.'",
+"        return result",
+"    cmp_ns = {",
+"        '__name__': '__main__',",
+"        '__builtins__': __builtins__,",
+"        'np': np, 'numpy': np,",
+"        'pd': pd, 'pandas': pd,",
+"        'protect': protect,",
+"        'df_before': original_df,",
+"        'df_after': transformed_df if transformed_df is not None else original_df,",
+"        'df': __protect_user_ns.get('df', original_df),",
+"    }",
+"    try:",
+"        tree = ast.parse(source, mode='exec')",
+"    except SyntaxError:",
+"        result['error'] = traceback.format_exc()",
+"        return result",
+"    last_expr = None",
+"    body = tree.body",
+"    if body and isinstance(body[-1], ast.Expr):",
+"        last_expr = ast.Expression(body[-1].value)",
+"        body = body[:-1]",
+"    exec_mod = ast.Module(body=body, type_ignores=[])",
+"    value = None",
+"    try:",
+"        with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):",
+"            if exec_mod.body:",
+"                exec(compile(exec_mod, '<compare>', 'exec'), cmp_ns)",
+"            if last_expr is not None:",
+"                value = eval(compile(last_expr, '<compare>', 'eval'), cmp_ns)",
+"    except BaseException:",
+"        result['stdout'] = out_buf.getvalue()",
+"        result['stderr'] = err_buf.getvalue()",
+"        result['error'] = traceback.format_exc()",
+"        return result",
+"    result['stdout'] = out_buf.getvalue()",
+"    result['stderr'] = err_buf.getvalue()",
+"    if value is None:",
+"        return result",
+"    try:",
+"        if isinstance(value, pd.DataFrame):",
+"            result['value_kind'] = 'dataframe'",
+"            result['value_html'] = value.to_html(max_rows=50, classes='dataframe', border=0)",
+"            result['value_text'] = 'DataFrame: ' + str(value.shape[0]) + ' rows × ' + str(value.shape[1]) + ' cols'",
+"        elif isinstance(value, pd.Series):",
+"            result['value_kind'] = 'series'",
+"            result['value_html'] = value.to_frame().to_html(max_rows=50, classes='dataframe', border=0)",
+"            result['value_text'] = 'Series[' + repr(value.name) + ']: ' + str(len(value)) + ' entries'",
+"        elif hasattr(value, '_repr_html_'):",
+"            html = value._repr_html_()",
+"            if html:",
+"                result['value_kind'] = 'html'",
+"                result['value_html'] = html",
+"            else:",
+"                result['value_kind'] = 'text'",
+"                result['value_text'] = repr(value)",
+"        else:",
+"            result['value_kind'] = 'text'",
+"            result['value_text'] = repr(value)",
+"    except Exception:",
+"        result['value_kind'] = 'text'",
+"        result['value_text'] = '<unrenderable value>'",
+"    return result",
+"",
+].join("\n");
 
 // ----------------------------------------------------------------------
 // Dataset upload + preview
@@ -750,26 +1744,26 @@ const uploadInput = document.getElementById("upload-input");
 const uploadLabel = document.getElementById("upload-label");
 const resetDataBtn = document.getElementById("reset-data-btn");
 const datasetInfo = document.getElementById("dataset-info");
-const dataPreviewEl = document.getElementById("data-preview");
 
-function refreshPreview() {
+function refreshDatasetInfo() {
   if (!pyodide) return;
   try {
-    const previewFn = pyodide.globals.get("__protect_preview");
-    const proxy = previewFn(10);
-    const result = proxy.toJs({ dict_converter: Object.fromEntries });
+    const fn = pyodide.globals.get("__protect_state_summary");
+    const proxy = fn();
+    const summary = proxy.toJs({ dict_converter: Object.fromEntries });
     proxy.destroy();
-    previewFn.destroy();
-    dataPreviewEl.innerHTML = result.html;
-    datasetInfo.textContent = result.summary;
+    fn.destroy();
+    if (summary.original_shape) {
+      datasetInfo.textContent = `${summary.dataset_name} · ${summary.original_shape[0].toLocaleString()} rows × ${summary.original_shape[1]} cols`;
+    } else {
+      datasetInfo.textContent = "—";
+    }
   } catch (err) {
-    dataPreviewEl.innerHTML = '<span class="empty">preview failed: ' + err.message + '</span>';
+    datasetInfo.textContent = "—";
   }
 }
 
 // Detect (extension, format) from a filename. Handles .csv.gz etc.
-// `needs` lists Python packages to install via the dual loader below.
-// `unsupported` flags formats that can't run in Pyodide (no WASM build available).
 function detectFormat(name) {
   const lower = name.toLowerCase();
   let ext = lower.split(".").pop();
@@ -781,14 +1775,10 @@ function detectFormat(name) {
     tsv: { needs: [] },
     txt: { needs: [] },
     json: { needs: [] },
-    // Apache Arrow IPC format. Requires pyarrow which has no WASM build for
-    // Pyodide (heavy C++ deps). Tell the user clearly and suggest parquet.
     feather: { unsupported: "Feather/Arrow needs pyarrow, which is not available in Pyodide (no WebAssembly build). Convert to Parquet or CSV first." },
     arrow:   { unsupported: "Feather/Arrow needs pyarrow, which is not available in Pyodide (no WebAssembly build). Convert to Parquet or CSV first." },
-    // Parquet works via fastparquet (pure-Python compressed-columnar reader).
     parquet: { needs: ["fastparquet"] },
     pq:      { needs: ["fastparquet"] },
-    // Excel uses openpyxl (.xlsx) or xlrd (.xls); both pure Python via micropip.
     xlsx: { needs: ["openpyxl"] },
     xls:  { needs: ["xlrd"] },
   };
@@ -801,12 +1791,7 @@ function detectFormat(name) {
   return { ext, needs: supported[ext].needs };
 }
 
-// Track which lazy packages have already been installed.
 const __loadedExtras = new Set();
-
-// Some packages ship as built-in Pyodide wheels; others are only on PyPI and
-// need micropip. Try loadPackage first (faster, no network beyond CDN); fall
-// back to micropip for pure-Python deps.
 let __micropipReady = false;
 async function ensurePackage(pkg) {
   if (__loadedExtras.has(pkg)) return;
@@ -817,7 +1802,7 @@ async function ensurePackage(pkg) {
       await pyodide.loadPackage(["micropip"]);
       __micropipReady = true;
     }
-    await pyodide.runPythonAsync(`import micropip; await micropip.install('${pkg}')`);
+    await pyodide.runPythonAsync("import micropip; await micropip.install('" + pkg + "')");
   }
   __loadedExtras.add(pkg);
 }
@@ -841,15 +1826,14 @@ async function handleUpload(file) {
 
   try {
     for (const pkg of fmt.needs) {
-      setStatus(`installing ${pkg}…`);
+      setStatus("installing " + pkg + "…");
       await ensurePackage(pkg);
     }
 
-    setStatus(`reading ${file.name}…`);
+    setStatus("reading " + file.name + "…");
     const buf = await file.arrayBuffer();
-    // Preserve the .gz suffix on disk so pandas compression='infer' picks it up.
     const safe = file.name.replace(/[^A-Za-z0-9._-]/g, "_");
-    const path = `/tmp/${safe}`;
+    const path = "/tmp/" + safe;
     pyodide.FS.writeFile(path, new Uint8Array(buf));
 
     const loader = pyodide.globals.get("__protect_load_file");
@@ -862,8 +1846,9 @@ async function handleUpload(file) {
       throw new Error(result.error);
     }
 
-    setStatus(`ready · ${result.name}: ${result.rows.toLocaleString()} rows × ${result.cols} cols`, "ready");
-    refreshPreview();
+    setStatus("ready · " + result.name + ": " + result.rows.toLocaleString() + " rows × " + result.cols + " cols", "ready");
+    refreshDatasetInfo();
+    refreshAllPanels();
   } catch (err) {
     setStatus("upload failed: " + err.message, "err");
     appendStderr("Upload failed: " + err.message);
@@ -872,7 +1857,7 @@ async function handleUpload(file) {
     resetDataBtn.disabled = false;
     runBtn.disabled = false;
     uploadLabel.classList.remove("disabled");
-    uploadInput.value = ""; // allow re-uploading the same file
+    uploadInput.value = "";
   }
 }
 
@@ -889,8 +1874,9 @@ resetDataBtn.addEventListener("click", () => {
     const result = proxy.toJs({ dict_converter: Object.fromEntries });
     proxy.destroy();
     resetFn.destroy();
-    setStatus(`ready · sample: ${result.rows} rows × ${result.cols} cols`, "ready");
-    refreshPreview();
+    setStatus("ready · sample: " + result.rows + " rows × " + result.cols + " cols", "ready");
+    refreshDatasetInfo();
+    refreshAllPanels();
   } catch (err) {
     setStatus("reset failed: " + err.message, "err");
   }
@@ -932,8 +1918,9 @@ async function runEditor() {
       appendStdout("(no output — last line was a statement, not an expression)");
     }
 
-    // Refresh the data panel preview in case the editor reassigned df.
-    refreshPreview();
+    // Refresh all data panels after a run.
+    refreshDatasetInfo();
+    refreshAllPanels();
   } catch (err) {
     appendStderr("JS error: " + (err && err.stack ? err.stack : err));
   } finally {
@@ -949,6 +1936,65 @@ editor.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     e.preventDefault();
     if (!runBtn.disabled) runEditor();
+  }
+});
+
+// ----------------------------------------------------------------------
+// Compare-code run handler
+// ----------------------------------------------------------------------
+async function runCompare() {
+  if (!pyodide) return;
+  const code = compareEditor.value;
+  if (!code.trim()) return;
+  compareRunBtn.disabled = true;
+  compareRunBtn.textContent = "Running…";
+  compareOutput.innerHTML = "";
+  try {
+    const fn = pyodide.globals.get("__protect_run_compare");
+    const proxy = fn(code);
+    const result = proxy.toJs({ dict_converter: Object.fromEntries });
+    proxy.destroy();
+    fn.destroy();
+    if (result.stdout) {
+      const pre = document.createElement("pre"); pre.className = "stdout"; pre.textContent = result.stdout;
+      compareOutput.appendChild(pre);
+    }
+    if (result.stderr) {
+      const pre = document.createElement("pre"); pre.className = "stderr"; pre.textContent = result.stderr;
+      compareOutput.appendChild(pre);
+    }
+    if (result.error) {
+      const pre = document.createElement("pre"); pre.className = "stderr"; pre.textContent = result.error;
+      compareOutput.appendChild(pre);
+    } else if (result.value_kind === "dataframe" || result.value_kind === "series" || result.value_kind === "html") {
+      const lbl = document.createElement("span"); lbl.className = "result-label"; lbl.textContent = result.value_text ? "result · " + result.value_text : "result";
+      compareOutput.appendChild(lbl);
+      const div = document.createElement("div"); div.innerHTML = result.value_html;
+      compareOutput.appendChild(div);
+    } else if (result.value_kind === "text") {
+      const lbl = document.createElement("span"); lbl.className = "result-label"; lbl.textContent = "result";
+      compareOutput.appendChild(lbl);
+      const pre = document.createElement("pre"); pre.className = "stdout"; pre.textContent = result.value_text;
+      compareOutput.appendChild(pre);
+    }
+    if (!result.stdout && !result.stderr && !result.error && !result.value_kind) {
+      const pre = document.createElement("pre"); pre.className = "stdout"; pre.textContent = "(no output — last line was a statement, not an expression)";
+      compareOutput.appendChild(pre);
+    }
+  } catch (err) {
+    const pre = document.createElement("pre"); pre.className = "stderr"; pre.textContent = "JS error: " + err.message;
+    compareOutput.appendChild(pre);
+  } finally {
+    compareRunBtn.disabled = false;
+    compareRunBtn.textContent = "Run ▸";
+  }
+}
+
+compareRunBtn.addEventListener("click", runCompare);
+compareEditor.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    if (!compareRunBtn.disabled) runCompare();
   }
 });
 
