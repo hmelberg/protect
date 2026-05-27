@@ -352,6 +352,66 @@
     cursor: pointer;
   }
   .toggle-only-changed input { accent-color: var(--accent); }
+  .toggle-only-changed.disabled { color: var(--muted); cursor: not-allowed; }
+  .toggle-only-changed.disabled input { cursor: not-allowed; }
+
+  /* Tabbed data view */
+  .data-tabs {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--line);
+    background: #f8f7f2;
+    padding: 0 8px;
+    align-items: stretch;
+  }
+  .tab {
+    font-family: var(--sans);
+    font-size: 13px;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    cursor: pointer;
+    margin-bottom: -1px;
+  }
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+  }
+  .tab:hover:not(.active) { color: var(--ink); }
+  .tab-meta {
+    margin-left: auto;
+    align-self: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    padding-right: 8px;
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .tab-panel-header {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    background: #fcfbf6;
+    display: flex; align-items: center; gap: 14px;
+    flex-wrap: wrap;
+  }
+  .tab-panel-body { padding: 0; }
+  .tab-panel-body.padded { padding: 12px 14px; }
+  .filter-note {
+    font-family: var(--sans); font-size: 12px;
+    color: var(--muted);
+    font-style: italic;
+  }
+  .tab-panel #output { min-height: 80px; max-height: 520px; overflow: auto; padding: 14px; }
 
   .tab-host { padding: 0; }
   .tabulator { font-family: var(--sans); font-size: 12.5px; }
@@ -477,14 +537,6 @@
       <textarea id="editor" spellcheck="false"></textarea>
     </div>
 
-    <div class="output-card">
-      <div class="output-bar">
-        output
-        <span class="meta" id="output-meta"></span>
-      </div>
-      <div id="output"><pre class="stdout">(no output yet — click Run)</pre></div>
-    </div>
-
     <div class="dataset-row">
       <span class="label">Dataset:</span>
       <span class="info" id="dataset-info">— (waiting for Pyodide)</span>
@@ -494,63 +546,87 @@
       <span class="formats">Accepted: .csv, .tsv, .txt, .json, .parquet, .xlsx, .xls — also gzipped (.csv.gz, .tsv.gz, .json.gz). Parquet/Excel readers install on demand. Feather/Arrow is unavailable in Pyodide — convert to Parquet first.</span>
     </div>
 
-    <details class="panel" id="panel-original" open>
-      <summary>
-        Original data
-        <span class="panel-meta" id="panel-original-meta"></span>
-        <span class="spacer"></span>
-        <span class="dl-wrap" data-target="original">
-          <button class="dl-main" type="button" title="Download CSV">↓ CSV</button>
-          <button class="dl-toggle" type="button" title="More formats">▾</button>
-          <div class="dl-menu">
-            <button type="button" data-fmt="csv">Download CSV</button>
-            <button type="button" data-fmt="json">Download JSON</button>
-          </div>
-        </span>
-      </summary>
-      <div class="panel-body">
-        <div id="table-original" class="tab-host"></div>
+    <div class="data-tabs">
+      <div class="tabs" role="tablist">
+        <button class="tab" type="button" data-tab="output" role="tab">Output</button>
+        <button class="tab" type="button" data-tab="original" role="tab">Original</button>
+        <button class="tab" type="button" data-tab="transformed" role="tab">Transformed</button>
+        <button class="tab active" type="button" data-tab="comparison" role="tab">Comparison</button>
+        <span class="tab-meta" id="tab-meta"></span>
       </div>
-    </details>
 
-    <details class="panel" id="panel-transformed" open>
-      <summary>
-        Transformed data
-        <span class="panel-meta" id="panel-transformed-meta"></span>
-        <span class="spacer"></span>
-        <span class="dl-wrap" data-target="transformed">
-          <button class="dl-main" type="button" title="Download CSV">↓ CSV</button>
-          <button class="dl-toggle" type="button" title="More formats">▾</button>
-          <div class="dl-menu">
-            <button type="button" data-fmt="csv">Download CSV</button>
-            <button type="button" data-fmt="json">Download JSON</button>
-          </div>
-        </span>
-      </summary>
-      <div class="panel-body">
-        <div id="table-transformed" class="tab-host"></div>
-        <div id="transformed-empty" class="panel-empty" style="display:none;">
-          Run something in the editor to see the transformed result here.
+      <div class="tab-panel" data-panel="output" role="tabpanel">
+        <div class="tab-panel-header">
+          <span style="font-weight:600;font-size:13px;">output</span>
+          <span class="meta" id="output-meta" style="font-family:var(--mono);font-size:12px;color:var(--muted);"></span>
+        </div>
+        <div class="tab-panel-body">
+          <div id="output"><pre class="stdout">(no output yet — click Run)</pre></div>
         </div>
       </div>
-    </details>
 
-    <details class="panel" id="panel-sidebyside" open>
-      <summary>
-        Side-by-side comparison
-        <span class="panel-meta" id="panel-sbs-meta"></span>
-        <span class="spacer"></span>
-        <label class="toggle-only-changed" onclick="event.stopPropagation();">
-          <input type="checkbox" id="only-changed-toggle"> only changed rows
-        </label>
-      </summary>
-      <div class="panel-body">
-        <div id="table-sidebyside" class="tab-host"></div>
-        <div id="sidebyside-empty" class="panel-empty">
-          Run something in the editor to see a side-by-side comparison.
+      <div class="tab-panel" data-panel="original" role="tabpanel">
+        <div class="tab-panel-header">
+          <span style="font-weight:600;font-size:13px;">Original data</span>
+          <span class="panel-meta" id="panel-original-meta" style="font-weight:400;color:var(--muted);font-family:var(--mono);font-size:12px;"></span>
+          <span style="flex:1;"></span>
+          <span class="dl-wrap" data-target="original">
+            <button class="dl-main" type="button" title="Download CSV">↓ CSV</button>
+            <button class="dl-toggle" type="button" title="More formats">▾</button>
+            <div class="dl-menu">
+              <button type="button" data-fmt="csv">Download CSV</button>
+              <button type="button" data-fmt="json">Download JSON</button>
+            </div>
+          </span>
+        </div>
+        <div class="tab-panel-body">
+          <div id="table-original" class="tab-host"></div>
         </div>
       </div>
-    </details>
+
+      <div class="tab-panel" data-panel="transformed" role="tabpanel">
+        <div class="tab-panel-header">
+          <span style="font-weight:600;font-size:13px;">Transformed data</span>
+          <span class="panel-meta" id="panel-transformed-meta" style="font-weight:400;color:var(--muted);font-family:var(--mono);font-size:12px;"></span>
+          <span style="flex:1;"></span>
+          <span class="dl-wrap" data-target="transformed">
+            <button class="dl-main" type="button" title="Download CSV">↓ CSV</button>
+            <button class="dl-toggle" type="button" title="More formats">▾</button>
+            <div class="dl-menu">
+              <button type="button" data-fmt="csv">Download CSV</button>
+              <button type="button" data-fmt="json">Download JSON</button>
+            </div>
+          </span>
+        </div>
+        <div class="tab-panel-body">
+          <div id="table-transformed" class="tab-host"></div>
+          <div id="transformed-empty" class="panel-empty">
+            Run something in the editor to see the transformed result here.
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel active" data-panel="comparison" role="tabpanel">
+        <div class="tab-panel-header">
+          <span style="font-weight:600;font-size:13px;">Side-by-side comparison</span>
+          <span class="panel-meta" id="panel-sbs-meta" style="font-weight:400;color:var(--muted);font-family:var(--mono);font-size:12px;"></span>
+          <span style="flex:1;"></span>
+          <label class="toggle-only-changed" id="only-transformed-label">
+            <input type="checkbox" id="only-transformed-toggle" checked> only transformed columns
+          </label>
+          <label class="toggle-only-changed" id="only-changed-label">
+            <input type="checkbox" id="only-changed-toggle"> only changed rows
+          </label>
+        </div>
+        <div class="tab-panel-body">
+          <div id="sidebyside-note-host"></div>
+          <div id="table-sidebyside" class="tab-host"></div>
+          <div id="sidebyside-empty" class="panel-empty">
+            Run something in the editor to see a side-by-side comparison.
+          </div>
+        </div>
+      </div>
+    </div>
 
     <details class="panel" id="panel-stats" open>
       <summary>
@@ -2707,6 +2783,36 @@ const panelTransformedMeta = document.getElementById("panel-transformed-meta");
 const panelSbsMeta = document.getElementById("panel-sbs-meta");
 const panelStatsMeta = document.getElementById("panel-stats-meta");
 const onlyChangedToggle = document.getElementById("only-changed-toggle");
+const onlyTransformedToggle = document.getElementById("only-transformed-toggle");
+const onlyChangedLabel = document.getElementById("only-changed-label");
+const onlyTransformedLabel = document.getElementById("only-transformed-label");
+const sidebysideNoteHost = document.getElementById("sidebyside-note-host");
+
+// Last side-by-side column metadata (for column-visibility toggling).
+let lastSbsColumnsMeta = null;
+
+// ----------------------------------------------------------------------
+// Tab switching
+// ----------------------------------------------------------------------
+function activateTab(tabName) {
+  document.querySelectorAll(".tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.getAttribute("data-tab") === tabName);
+  });
+  document.querySelectorAll(".tab-panel").forEach((p) => {
+    p.classList.toggle("active", p.getAttribute("data-panel") === tabName);
+  });
+  // When activating a Tabulator-hosted tab, ask the table to redraw — Tabulator
+  // does not size correctly when its host is display:none at build time.
+  try {
+    if (tabName === "original" && tableOriginal) tableOriginal.redraw(true);
+    if (tabName === "transformed" && tableTransformed) tableTransformed.redraw(true);
+    if (tabName === "comparison" && tableSideBySide) tableSideBySide.redraw(true);
+  } catch (e) { /* ignore */ }
+}
+
+document.querySelectorAll(".tab").forEach((btn) => {
+  btn.addEventListener("click", () => activateTab(btn.getAttribute("data-tab")));
+});
 
 // Build a Tabulator columns array from a list of column names + (optional) dtypes.
 function buildColumns(names, dtypes) {
@@ -2810,6 +2916,13 @@ function renderTransformedPanel() {
   }
 }
 
+function setComparisonFiltersEnabled(enabled) {
+  onlyChangedToggle.disabled = !enabled;
+  onlyTransformedToggle.disabled = !enabled;
+  onlyChangedLabel.classList.toggle("disabled", !enabled);
+  onlyTransformedLabel.classList.toggle("disabled", !enabled);
+}
+
 function renderSideBySidePanel() {
   if (!pyodide) return;
   try {
@@ -2819,19 +2932,24 @@ function renderSideBySidePanel() {
     proxy.destroy();
     fn.destroy();
     const host = document.getElementById("table-sidebyside");
+    sidebysideNoteHost.innerHTML = "";
     if (!result || !result.has_data) {
       if (tableSideBySide) {
         try { tableSideBySide.destroy(); } catch (e) { /* ignore */ }
         tableSideBySide = null;
       }
+      lastSbsColumnsMeta = null;
       host.innerHTML = "";
       sidebysideEmpty.style.display = "";
       panelSbsMeta.textContent = "— run something first";
+      setComparisonFiltersEnabled(false);
       return;
     }
     sidebysideEmpty.style.display = "none";
+    setComparisonFiltersEnabled(true);
+    lastSbsColumnsMeta = result.columns;
 
-    // Build column groups: [{col, status: "same"|"new"|"dropped"|"changed"}]
+    // Build column groups: [{col, status: "unchanged"|"new"|"dropped"|"changed"}]
     const columnGroups = [];
     for (const c of result.columns) {
       const group = {
@@ -2894,7 +3012,10 @@ function renderSideBySidePanel() {
       placeholder: "no rows",
     });
     host._tab = tableSideBySide;
-    tableSideBySide.on("tableBuilt", applyOnlyChangedFilter);
+    tableSideBySide.on("tableBuilt", () => {
+      applyOnlyChangedFilter();
+      applyOnlyTransformedColumns();
+    });
 
     panelSbsMeta.textContent = `${result.shape[0]} rows · ${result.changed_count} changed`;
   } catch (err) {
@@ -2914,7 +3035,53 @@ function applyOnlyChangedFilter() {
   } catch (e) { /* table not yet built */ }
 }
 
+// Show/hide column groups based on the "only transformed columns" checkbox.
+// A column is "transformed" if its status is changed/new/dropped (not unchanged).
+function applyOnlyTransformedColumns() {
+  if (!tableSideBySide || !lastSbsColumnsMeta) return;
+  sidebysideNoteHost.innerHTML = "";
+  const onlyTx = onlyTransformedToggle.checked;
+  const transformedCols = lastSbsColumnsMeta.filter(
+    (c) => c.status === "changed" || c.status === "new" || c.status === "dropped"
+  );
+  // Edge case: nothing changed at all — show all columns with a note.
+  if (onlyTx && transformedCols.length === 0) {
+    const note = document.createElement("div");
+    note.className = "filter-note";
+    note.style.padding = "8px 14px";
+    note.textContent = "(nothing changed — showing all columns)";
+    sidebysideNoteHost.appendChild(note);
+    showAllSbsColumns();
+    return;
+  }
+  for (const c of lastSbsColumnsMeta) {
+    const isTransformed =
+      c.status === "changed" || c.status === "new" || c.status === "dropped";
+    const visible = onlyTx ? isTransformed : true;
+    try {
+      if (visible) {
+        tableSideBySide.showColumn(c.field_before);
+        tableSideBySide.showColumn(c.field_after);
+      } else {
+        tableSideBySide.hideColumn(c.field_before);
+        tableSideBySide.hideColumn(c.field_after);
+      }
+    } catch (e) { /* ignore */ }
+  }
+}
+
+function showAllSbsColumns() {
+  if (!tableSideBySide || !lastSbsColumnsMeta) return;
+  for (const c of lastSbsColumnsMeta) {
+    try {
+      tableSideBySide.showColumn(c.field_before);
+      tableSideBySide.showColumn(c.field_after);
+    } catch (e) { /* ignore */ }
+  }
+}
+
 onlyChangedToggle.addEventListener("change", applyOnlyChangedFilter);
+onlyTransformedToggle.addEventListener("change", applyOnlyTransformedColumns);
 
 // Compare values, treating NaN/null as equal to themselves.
 function valuesEqual(a, b) {
@@ -3008,10 +3175,13 @@ document.addEventListener("click", () => {
   document.querySelectorAll(".dl-menu.open").forEach((m) => m.classList.remove("open"));
 });
 
-// Prevent the download button row from toggling the <details> panel.
+// Prevent the download button row from toggling any remaining <details> panel.
 document.querySelectorAll(".panel > summary .dl-wrap, .panel > summary .toggle-only-changed").forEach((el) => {
   el.addEventListener("click", (e) => e.stopPropagation());
 });
+
+// Disable the comparison filter checkboxes until the first run produces data.
+setComparisonFiltersEnabled(false);
 
 // ----------------------------------------------------------------------
 // Pyodide bootstrap
@@ -3242,6 +3412,8 @@ const PYTHON_BOOTSTRAP = [
 "    a = _stringify(a).where(pd.notna(a), None)",
 "    rows = []",
 "    changed_count = 0",
+"    # Per-column 'any cell changed' flag (only meaningful when col exists in both).",
+"    col_any_changed = {c: False for c in all_cols}",
 "    MAX = 2000",
 "    for i in idx[:MAX]:",
 "        row = {'_idx': str(i)}",
@@ -3260,6 +3432,7 @@ const PYTHON_BOOTSTRAP = [
 "                pass",
 "            row[c + '_before'] = bv",
 "            row[c + '_after'] = av",
+"            cell_changed = False",
 "            if bv != av:",
 "                # NaN != NaN; treat both-NaN/None as equal.",
 "                if bv is None and av is None:",
@@ -3271,20 +3444,26 @@ const PYTHON_BOOTSTRAP = [
 "                        if isinstance(bv, float) and isinstance(av, float) and math.isnan(bv) and math.isnan(av):",
 "                            pass",
 "                        else:",
-"                            any_change = True",
+"                            cell_changed = True",
 "                    except Exception:",
-"                        any_change = True",
+"                        cell_changed = True",
+"            if cell_changed:",
+"                any_change = True",
+"                col_any_changed[c] = True",
 "        row['_changed'] = any_change",
 "        if any_change:",
 "            changed_count += 1",
 "        rows.append(row)",
 "    cols_meta = []",
 "    for c in all_cols:",
-"        status = 'same'",
 "        if c not in b_cols:",
 "            status = 'new'",
 "        elif c not in a_cols:",
 "            status = 'dropped'",
+"        elif col_any_changed.get(c, False):",
+"            status = 'changed'",
+"        else:",
+"            status = 'unchanged'",
 "        cols_meta.append({",
 "            'name': str(c),",
 "            'field_before': c + '_before',",
