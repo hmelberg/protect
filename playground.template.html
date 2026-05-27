@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>protect — playground</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --panel: #ffffff;
+    --ink: #1c1c1c;
+    --muted: #5a5a5a;
+    --line: #e3e1da;
+    --accent: #1f5fa8;
+    --accent-soft: #e7eef8;
+    --ok: #2f7d3a;
+    --err: #b13a2b;
+    --code-bg: #f4f2ec;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); }
+  a { color: var(--accent); }
+
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+  header .tag { font-family: var(--mono); color: var(--muted); font-size: 12px; }
+  header .status { margin-left: auto; font-family: var(--mono); font-size: 12px; padding: 4px 10px; border-radius: 4px; background: var(--code-bg); color: var(--muted); }
+  header .status.ready { background: #e2f0e2; color: var(--ok); }
+  header .status.err { background: #f7e2de; color: var(--err); }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 0;
+    min-height: calc(100vh - 60px);
+  }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    aside { border-right: none !important; border-bottom: 1px solid var(--line); max-height: 360px; }
+  }
+
+  aside {
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    padding: 16px;
+    overflow-y: auto;
+  }
+  aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 10px 0; }
+  .verb {
+    padding: 8px 10px;
+    margin: 4px 0;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+  }
+  .verb-head { display: flex; align-items: center; gap: 8px; }
+  .verb-name { font-family: var(--mono); font-weight: 600; color: var(--accent); font-size: 13px; flex: 1; }
+  .verb-desc { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+  .try-btn {
+    font-family: var(--mono); font-size: 11px;
+    padding: 2px 8px;
+    border: 1px solid var(--accent); color: var(--accent); background: #fff;
+    border-radius: 3px; cursor: pointer;
+  }
+  .try-btn:hover { background: var(--accent-soft); }
+
+  main {
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-width: 0;
+  }
+
+  section.docs {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 18px 20px;
+  }
+  section.docs h2 { margin: 0 0 8px 0; font-size: 16px; }
+  section.docs p { margin: 8px 0; color: #333; }
+  section.docs table { border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+  section.docs th, section.docs td { text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  section.docs th { color: var(--muted); font-weight: 600; }
+  section.docs code { font-family: var(--mono); background: var(--code-bg); padding: 1px 5px; border-radius: 3px; font-size: 12.5px; }
+  section.docs ul { margin: 8px 0; padding-left: 22px; }
+  section.docs li { margin: 4px 0; color: #333; }
+  details { margin-top: 8px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+
+  .editor-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .editor-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    background: #f8f7f2;
+  }
+  .editor-bar h3 { margin: 0; font-size: 13px; font-weight: 600; }
+  .editor-bar .spacer { flex: 1; }
+  button.run {
+    font-family: var(--sans); font-size: 13px; font-weight: 600;
+    padding: 6px 16px;
+    background: var(--accent); color: white;
+    border: none; border-radius: 4px;
+    cursor: pointer;
+  }
+  button.run:hover:not(:disabled) { background: #194e8d; }
+  button.run:disabled { background: #aaa; cursor: not-allowed; }
+  button.secondary {
+    font-family: var(--sans); font-size: 12px;
+    padding: 5px 10px;
+    background: #fff; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 4px;
+    cursor: pointer;
+  }
+  button.secondary:hover { background: var(--code-bg); }
+
+  textarea#editor {
+    width: 100%;
+    min-height: 220px;
+    padding: 12px 14px;
+    border: none;
+    outline: none;
+    resize: vertical;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.55;
+    background: #fdfcf7;
+    color: var(--ink);
+    tab-size: 4;
+  }
+
+  .output-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .output-bar {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    background: #f8f7f2;
+    font-size: 13px; font-weight: 600;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .output-bar .meta { font-weight: 400; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  #output { padding: 14px; min-height: 80px; max-height: 520px; overflow: auto; }
+  #output pre {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  #output .stdout { color: #333; }
+  #output .stderr { color: var(--err); white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px; }
+  #output .result-label {
+    display: block;
+    font-family: var(--mono); font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin: 10px 0 4px 0;
+  }
+  #output table { border-collapse: collapse; font-size: 12.5px; margin: 4px 0; }
+  #output th, #output td { padding: 4px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+  #output th { background: var(--code-bg); font-weight: 600; }
+  #output table.dataframe tbody tr:hover { background: #fafaf3; }
+
+  footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+    background: var(--panel);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>protect</h1>
+  <span class="tag">statistical disclosure control · in-browser playground</span>
+  <span id="status" class="status">loading Pyodide…</span>
+</header>
+
+<div class="layout">
+  <aside>
+    <h2>verbs</h2>
+    <div id="verb-list"></div>
+  </aside>
+
+  <main>
+    <section class="docs">
+      <h2>What is <code>protect</code>?</h2>
+      <p>
+        <code>protect</code> is a Python package of statistical-disclosure-control (SDC) verbs for tabular data and analytical outputs.
+        It exposes 17 composable functions — value perturbation, generalisation, suppression, and risk reporting — designed for
+        health-research microdata and result-release workflows. This playground runs the package entirely in your browser via Pyodide;
+        nothing leaves your machine.
+      </p>
+      <p>A synthetic panel-shaped dataset of 200 patients is pre-loaded as <code>df</code> (columns: pid, visit, dob, sex, zip, country, icd, income, cost).</p>
+
+      <h3 style="margin:14px 0 6px;font-size:14px;">Universal arguments</h3>
+      <table>
+        <thead><tr><th>arg</th><th>type</th><th>meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>unit_id</code></td><td>str | None</td><td>Column that identifies an individual or unit. When set, share-based selection and per-unit draws operate at the unit level (one decision per person, broadcast to all their rows).</td></tr>
+          <tr><td><code>share</code></td><td>float in [0,1]</td><td>Fraction of units (or rows when <code>unit_id</code> is None) to perturb. <code>share=1.0</code> means "all"; <code>share=0.1</code> means "10%".</td></tr>
+          <tr><td><code>random_state</code></td><td>int | Generator | None</td><td>Seed or numpy Generator for reproducibility.</td></tr>
+        </tbody>
+      </table>
+
+      <details>
+        <summary>Caveats &amp; notes</summary>
+        <ul>
+          <li>Pseudonymisation is not anonymisation — see <code>BACKGROUND.md</code> for the long version.</li>
+          <li>Default scales (e.g. <code>noise(scale="auto")</code>) are conservative starting points, not policy recommendations.</li>
+          <li><code>risk</code> reports k-anonymity / uniqueness on the supplied quasi-identifiers only; combine with <code>suppress</code> and the value-level verbs for release.</li>
+          <li><code>protect</code> applies a recipe in dictionary order — composition matters.</li>
+          <li>Re-run the same code with different <code>random_state</code> values to see noise-driven variability.</li>
+        </ul>
+      </details>
+    </section>
+
+    <div class="editor-card">
+      <div class="editor-bar">
+        <h3>editor</h3>
+        <span class="meta" style="font-family:var(--mono);font-size:12px;color:var(--muted);">Ctrl/⌘+Enter to run</span>
+        <span class="spacer"></span>
+        <button class="secondary" id="reset-btn" title="restore the starter example">reset</button>
+        <button class="run" id="run-btn" disabled>Run ▸</button>
+      </div>
+      <textarea id="editor" spellcheck="false"></textarea>
+    </div>
+
+    <div class="output-card">
+      <div class="output-bar">
+        output
+        <span class="meta" id="output-meta"></span>
+      </div>
+      <div id="output"><pre class="stdout">(no output yet — click Run)</pre></div>
+    </div>
+  </main>
+</div>
+
+<footer>
+  Powered by <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>.
+  Source: <code>protect.py</code> — see <code>README.md</code> and <code>BACKGROUND.md</code> in the repo.
+</footer>
+
+<!-- protect.py source, inlined as text (not executed by the browser) -->
+<script type="text/plain" id="protect-source">
+{{PROTECT_PY_SOURCE}}
+</script>
+
+<!-- Bootstrap code -->
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script>
+"use strict";
+
+// ----------------------------------------------------------------------
+// Verb catalogue (name, one-line description, example code)
+// ----------------------------------------------------------------------
+const VERBS = [
+  { name: "noise", desc: "Add gaussian/laplace/uniform noise to numeric columns.",
+    code: `# noise — add gaussian noise to a numeric column
+out = protect.noise(df, "income", scale=1000, random_state=42)
+out.head()` },
+  { name: "jitter", desc: "Small symmetric noise — works on numeric or date columns.",
+    code: `# jitter — small symmetric perturbation (numeric or date)
+out = protect.jitter(df, "visit", random_state=42)
+out.head()` },
+  { name: "winsorize", desc: "Cap extreme values at chosen quantiles.",
+    code: `# winsorize — cap extremes at 5th / 95th quantiles
+out = protect.winsorize(df, "income", limits=(0.05, 0.95))
+out.head()` },
+  { name: "bin", desc: "Group a numeric column into bins or quantiles.",
+    code: `# bin — group income into 5 equal-width bins
+out = protect.bin(df, "income", bins=5)
+out[["pid", "income"]].head()` },
+  { name: "year", desc: "Truncate a date column to year (or coarser).",
+    code: `# year — extract year from date of birth
+out = protect.year(df, "dob")
+out[["pid", "dob"]].head()` },
+  { name: "month", desc: "Truncate a date column to year-month.",
+    code: `# month — extract year-month from visit date
+out = protect.month(df, "visit")
+out[["pid", "visit"]].head()` },
+  { name: "diff", desc: "Convert dates to elapsed differences (e.g. from first visit).",
+    code: `# diff — days since each patient's first visit
+out = protect.diff(df, "visit", ref="first_per_unit", unit_id="pid")
+out[["pid", "visit"]].head()` },
+  { name: "shorten", desc: "Truncate strings (e.g. ICD codes, postcodes).",
+    code: `# shorten — drop the digit after the dot in ICD codes
+out = protect.shorten(df, "icd", sep=".")
+out[["pid", "icd"]].head()` },
+  { name: "collapse", desc: "Merge rare categories into 'Other'.",
+    code: `# collapse — merge countries with fewer than 5 rows into "Other"
+out = protect.collapse(df, "country", rare_below=5)
+out["country"].value_counts()` },
+  { name: "pseudonymize", desc: "Replace IDs with random or hashed pseudonyms.",
+    code: `# pseudonymize — replace patient IDs with random tokens
+out, key = protect.pseudonymize(df, "pid", random_state=42)
+out.head()` },
+  { name: "insert", desc: "Inject synthetic decoy rows.",
+    code: `# insert — append 5% synthetic decoy rows
+out = protect.insert(df, share=0.05, random_state=42)
+out.tail()` },
+  { name: "eliminate", desc: "Drop a share of rows or units.",
+    code: `# eliminate — drop 10% of rows
+out = protect.eliminate(df, share=0.1, random_state=42)
+out.head()` },
+  { name: "swap", desc: "Swap values between randomly paired rows.",
+    code: `# swap — swap cost between random row pairs
+out = protect.swap(df, "cost", share=0.5, random_state=42)
+out.head()` },
+  { name: "suppress", desc: "Hide table cells that fail a minimum-count rule.",
+    code: `# suppress — null out small cells in a cross-tab
+tab = df.groupby(["sex", "country"])["cost"].mean().unstack()
+counts = df.groupby(["sex", "country"]).size().unstack().fillna(0)
+protect.suppress(tab, counts=counts, min_n=5, round=10)` },
+  { name: "risk", desc: "Report k-anonymity / uniqueness on quasi-identifiers.",
+    code: `# risk — k-anonymity report on quasi-identifiers
+report = protect.risk(df, quasi_ids=["sex", "zip", "country"], unit_id="pid")
+print(report.describe())` },
+  { name: "protect", desc: "Apply a recipe of verbs in order, with an audit log.",
+    code: `# protect — composed recipe with audit trail
+df_safe, log = protect.protect(df, unit_id="pid", recipe={
+    "income":  {"winsorize": {"limits": (0.01, 0.99)}},
+    "cost":    {"noise": {"scale": 50, "random_state": 42}},
+    "dob":     {"year": {"bin": 5}},
+    "country": {"collapse": {"rare_below": 10}},
+})
+print(log.to_text())
+df_safe.head()` },
+  { name: "profile", desc: "Apply a named preset (e.g. HIPAA Safe Harbor).",
+    code: `# profile — apply the HIPAA Safe Harbor preset
+df_out, log = protect.profile(
+    df, "safe_harbor",
+    date_cols=["dob"], zip_col="zip", id_cols=["pid"],
+)
+print(log.to_text())
+df_out.head()` },
+];
+
+// Starter example shown on first load.
+const STARTER = `# Welcome — \`df\` is already loaded (200 patients, 9 columns).
+# Try this, then poke at any verb on the left.
+
+out = protect.noise(df, "income", scale=1000, random_state=42)
+out.head()
+`;
+
+// ----------------------------------------------------------------------
+// DOM refs
+// ----------------------------------------------------------------------
+const statusEl = document.getElementById("status");
+const editor   = document.getElementById("editor");
+const runBtn   = document.getElementById("run-btn");
+const resetBtn = document.getElementById("reset-btn");
+const outputEl = document.getElementById("output");
+const outputMeta = document.getElementById("output-meta");
+const verbList = document.getElementById("verb-list");
+
+// ----------------------------------------------------------------------
+// Render verb list
+// ----------------------------------------------------------------------
+for (const v of VERBS) {
+  const div = document.createElement("div");
+  div.className = "verb";
+  div.innerHTML = `
+    <div class="verb-head">
+      <span class="verb-name">${v.name}</span>
+      <button class="try-btn" type="button">Try</button>
+    </div>
+    <div class="verb-desc">${v.desc}</div>
+  `;
+  div.querySelector(".try-btn").addEventListener("click", () => {
+    editor.value = v.code;
+    editor.focus();
+    editor.scrollTop = 0;
+  });
+  verbList.appendChild(div);
+}
+
+editor.value = STARTER;
+resetBtn.addEventListener("click", () => { editor.value = STARTER; editor.focus(); });
+
+// ----------------------------------------------------------------------
+// Output helpers
+// ----------------------------------------------------------------------
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = "status" + (kind ? " " + kind : "");
+}
+
+function clearOutput() { outputEl.innerHTML = ""; outputMeta.textContent = ""; }
+
+function appendStdout(text) {
+  if (!text) return;
+  const pre = document.createElement("pre");
+  pre.className = "stdout";
+  pre.textContent = text;
+  outputEl.appendChild(pre);
+}
+function appendStderr(text) {
+  if (!text) return;
+  const pre = document.createElement("pre");
+  pre.className = "stderr";
+  pre.textContent = text;
+  outputEl.appendChild(pre);
+}
+function appendResultLabel(text) {
+  const label = document.createElement("span");
+  label.className = "result-label";
+  label.textContent = text;
+  outputEl.appendChild(label);
+}
+function appendHTML(html) {
+  const wrap = document.createElement("div");
+  wrap.innerHTML = html;
+  outputEl.appendChild(wrap);
+}
+function appendText(text) {
+  const pre = document.createElement("pre");
+  pre.className = "stdout";
+  pre.textContent = text;
+  outputEl.appendChild(pre);
+}
+
+// ----------------------------------------------------------------------
+// Pyodide bootstrap
+// ----------------------------------------------------------------------
+let pyodide = null;
+let pythonRunner = null; // a Python callable that executes user code and returns a dict
+
+async function bootstrap() {
+  try {
+    setStatus("loading Pyodide runtime…");
+    pyodide = await loadPyodide({
+      indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/",
+    });
+
+    setStatus("loading numpy + pandas…");
+    await pyodide.loadPackage(["numpy", "pandas"]);
+
+    setStatus("installing protect…");
+    // Write the inlined protect.py source to the Pyodide filesystem.
+    const src = document.getElementById("protect-source").textContent;
+    pyodide.FS.writeFile("/home/pyodide/protect.py", src);
+
+    // Set up: import protect, build the sample dataframe, define a runner
+    // function that captures stdout/stderr and the last expression value.
+    setStatus("generating sample data…");
+    pyodide.runPython(`
+import sys
+sys.path.insert(0, "/home/pyodide")
+import numpy as np
+import pandas as pd
+import protect
+
+# Synthetic panel-shaped dataset, mirroring examples.py but smaller (200 patients).
+_rng = np.random.default_rng(42)
+_n_patients = 200
+_visits_per_patient = _rng.integers(1, 6, size=_n_patients)
+
+_countries = (["USA"] * 80 + ["UK"] * 40 + ["DE"] * 32 + ["IN"] * 24
+              + ["NO"] * 16 + ["IS", "LI", "AD", "TV"] * 2)
+_rng.shuffle(_countries)
+
+_rows = []
+for _i in range(_n_patients):
+    _pid = f"PT{_i:05d}"
+    _sex = _rng.choice(["M", "F"])
+    _dob = pd.Timestamp("1950-01-01") + pd.Timedelta(days=int(_rng.integers(0, 25000)))
+    _zip = f"{int(_rng.integers(10000, 99999)):05d}"
+    _income = float(_rng.normal(60000, 20000))
+    for _v in range(_visits_per_patient[_i]):
+        _visit = pd.Timestamp("2020-01-01") + pd.Timedelta(days=int(_rng.integers(0, 1500)))
+        _icd = _rng.choice(["I10", "I10.9", "E11.9", "C50.9", "Z00.00", "M54.5", "F32.9"])
+        _cost = float(_rng.normal(500, 200))
+        _rows.append({"pid": _pid, "visit": _visit, "dob": _dob, "sex": _sex,
+                      "zip": _zip, "country": _countries[_i],
+                      "icd": _icd, "income": _income, "cost": _cost})
+
+df = pd.DataFrame(_rows).sort_values(["pid", "visit"]).reset_index(drop=True)
+
+# Runner: execute user code, capture stdout/stderr, and evaluate the trailing
+# expression (Jupyter-like) for repr/HTML output.
+import ast, io, traceback, contextlib
+
+def __protect_run(source: str) -> dict:
+    out_buf = io.StringIO()
+    err_buf = io.StringIO()
+    result = {"stdout": "", "stderr": "", "value_html": None, "value_text": None,
+              "value_kind": None, "error": None}
+    user_ns = __protect_user_ns
+
+    try:
+        tree = ast.parse(source, mode="exec")
+    except SyntaxError:
+        result["error"] = traceback.format_exc()
+        return result
+
+    # Split: everything but the last node is exec'd; if last is Expr, eval it.
+    last_expr = None
+    body = tree.body
+    if body and isinstance(body[-1], ast.Expr):
+        last_expr = ast.Expression(body[-1].value)
+        body = body[:-1]
+    exec_mod = ast.Module(body=body, type_ignores=[])
+
+    try:
+        with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
+            if exec_mod.body:
+                exec(compile(exec_mod, "<editor>", "exec"), user_ns)
+            value = None
+            if last_expr is not None:
+                value = eval(compile(last_expr, "<editor>", "eval"), user_ns)
+    except BaseException:
+        result["stdout"] = out_buf.getvalue()
+        result["stderr"] = err_buf.getvalue()
+        result["error"] = traceback.format_exc()
+        return result
+
+    result["stdout"] = out_buf.getvalue()
+    result["stderr"] = err_buf.getvalue()
+
+    if value is None:
+        return result
+
+    # Render the trailing value.
+    try:
+        if isinstance(value, pd.DataFrame):
+            result["value_kind"] = "dataframe"
+            result["value_html"] = value.to_html(max_rows=50, classes="dataframe", border=0)
+            result["value_text"] = f"DataFrame: {value.shape[0]} rows × {value.shape[1]} cols"
+        elif isinstance(value, pd.Series):
+            result["value_kind"] = "series"
+            result["value_html"] = value.to_frame().to_html(max_rows=50, classes="dataframe", border=0)
+            result["value_text"] = f"Series[{value.name!r}]: {len(value)} entries"
+        elif hasattr(value, "_repr_html_"):
+            html = value._repr_html_()
+            if html:
+                result["value_kind"] = "html"
+                result["value_html"] = html
+            else:
+                result["value_kind"] = "text"
+                result["value_text"] = repr(value)
+        else:
+            result["value_kind"] = "text"
+            result["value_text"] = repr(value)
+    except Exception:
+        result["value_kind"] = "text"
+        result["value_text"] = "<unrenderable value>"
+
+    return result
+
+# Persistent namespace for the editor (so users can keep state between Runs).
+__protect_user_ns = {
+    "__name__": "__main__",
+    "__builtins__": __builtins__,
+    "np": np, "numpy": np,
+    "pd": pd, "pandas": pd,
+    "protect": protect,
+    "df": df,
+}
+`);
+    pythonRunner = pyodide.globals.get("__protect_run");
+
+    setStatus("ready · " + (pyodide.globals.get("df").shape[0]) + " rows loaded", "ready");
+    runBtn.disabled = false;
+
+    // Replace placeholder output with a friendly hint.
+    outputEl.innerHTML = '<pre class="stdout">df is loaded — click Run, or press Ctrl/⌘+Enter.</pre>';
+  } catch (err) {
+    console.error(err);
+    setStatus("init failed: " + err.message, "err");
+    appendStderr("Failed to initialise Pyodide:\n" + (err && err.stack ? err.stack : err));
+  }
+}
+
+// ----------------------------------------------------------------------
+// Run handler
+// ----------------------------------------------------------------------
+async function runEditor() {
+  if (!pythonRunner) return;
+  const code = editor.value;
+  if (!code.trim()) return;
+
+  runBtn.disabled = true;
+  runBtn.textContent = "Running…";
+  outputMeta.textContent = "";
+  clearOutput();
+  const started = performance.now();
+
+  try {
+    const resultProxy = pythonRunner(code);
+    const result = resultProxy.toJs({ dict_converter: Object.fromEntries });
+    resultProxy.destroy();
+
+    if (result.stdout) appendStdout(result.stdout);
+    if (result.stderr) appendStderr(result.stderr);
+
+    if (result.error) {
+      appendStderr(result.error);
+    } else if (result.value_kind === "dataframe" || result.value_kind === "series" || result.value_kind === "html") {
+      appendResultLabel(result.value_text ? "result · " + result.value_text : "result");
+      appendHTML(result.value_html);
+    } else if (result.value_kind === "text") {
+      appendResultLabel("result");
+      appendText(result.value_text);
+    }
+
+    if (!result.stdout && !result.stderr && !result.error && !result.value_kind) {
+      appendStdout("(no output — last line was a statement, not an expression)");
+    }
+  } catch (err) {
+    appendStderr("JS error: " + (err && err.stack ? err.stack : err));
+  } finally {
+    const elapsed = (performance.now() - started).toFixed(0);
+    outputMeta.textContent = `· ${elapsed} ms`;
+    runBtn.disabled = false;
+    runBtn.textContent = "Run ▸";
+  }
+}
+
+runBtn.addEventListener("click", runEditor);
+editor.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    if (!runBtn.disabled) runEditor();
+  }
+});
+
+bootstrap();
+</script>
+
+</body>
+</html>

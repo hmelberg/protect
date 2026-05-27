@@ -2,6 +2,8 @@
 
 A Python toolkit for statistical disclosure control on tabular data and analytical results. Pure `numpy` + `pandas`. Single file. Built around 17 single-token verbs.
 
+**Try it now without installing:** [hmelberg.github.io/protect/playground.html](https://hmelberg.github.io/protect/playground.html) — runs the full package in your browser via Pyodide.
+
 ## What it does
 
 `protect` distinguishes two functions:
@@ -13,10 +15,29 @@ Both are first-class. The verb `suppress` covers result protection; every other 
 
 ## Install
 
+Install directly from GitHub:
+
 ```bash
-cd /Users/hom/Documents/GitHub/protect
-pip install -e .
+pip install git+https://github.com/hmelberg/protect.git
 ```
+
+Pin to a specific commit or tag for reproducibility:
+
+```bash
+pip install git+https://github.com/hmelberg/protect.git@main
+pip install "git+https://github.com/hmelberg/protect.git@v0.1.0"   # once a tag exists
+```
+
+Or clone and install editable for development:
+
+```bash
+git clone https://github.com/hmelberg/protect.git
+cd protect
+pip install -e ".[test]"
+pytest    # 112 tests
+```
+
+Requires Python 3.10+. Dependencies: `numpy>=1.24`, `pandas>=2.0`. Optional extras for the test suite (`pytest`, `statsmodels`, `matplotlib`) install via `[test]`.
 
 ## Quick start
 
@@ -127,9 +148,22 @@ See `BACKGROUND.md` for the SDC primer: HIPAA Safe Harbor, GDPR, Norwegian `hels
 
 ## Playground
 
-Open `playground.html` in a browser (after Group K) to try the verbs against sample data without installing anything — runs entirely in-browser via Pyodide.
+Try the verbs against a sample 200-patient panel dataset, entirely in your browser:
+
+- **Hosted:** [hmelberg.github.io/protect/playground.html](https://hmelberg.github.io/protect/playground.html)
+- **Local:** clone the repo and open `playground.html` directly (no server needed)
+
+Click any verb in the sidebar to drop a working example into the editor; `Ctrl/⌘+Enter` runs. First load takes ~10–20 s while Pyodide + numpy + pandas download (~20 MB, cached after).
 
 ## Spec & implementation
 
-- Design spec: `docs/specs/2026-05-27-protect-design.md`
-- Implementation plan: `docs/plans/2026-05-27-protect-implementation.md`
+- Design spec: [`docs/specs/2026-05-27-protect-design.md`](docs/specs/2026-05-27-protect-design.md)
+- Implementation plan: [`docs/plans/2026-05-27-protect-implementation.md`](docs/plans/2026-05-27-protect-implementation.md)
+
+## License
+
+No license file yet. Treat as all-rights-reserved until one is added.
+
+---
+
+Built by [Hans Melberg](https://github.com/hmelberg) for register-data and health-research disclosure protection. Contributions and issue reports welcome.
