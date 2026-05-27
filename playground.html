@@ -82,6 +82,40 @@
     border-radius: 3px; cursor: pointer;
   }
   .try-btn:hover { background: var(--accent-soft); }
+  .docs-btn {
+    font-family: var(--mono); font-size: 11px;
+    padding: 2px 7px;
+    border: 1px solid var(--muted); color: var(--muted); background: #fff;
+    border-radius: 3px; cursor: pointer;
+  }
+  .docs-btn:hover { background: var(--code-bg); }
+  .verb-doc {
+    display: none;
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: #f4f2ec;
+    border-radius: 4px;
+    font-size: 11.5px;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .verb.expanded .verb-doc { display: block; }
+  .verb-doc pre.sig {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    background: transparent;
+    margin: 0 0 6px 0;
+    white-space: pre-wrap;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .verb-doc .body {
+    font-family: var(--mono);
+    white-space: pre-wrap;
+    color: var(--ink);
+    line-height: 1.4;
+    margin: 0;
+  }
 
   main {
     padding: 20px 24px;
@@ -435,7 +469,8 @@
   .stats-table td.delta-pos { color: var(--ok); font-family: var(--mono); }
   .stats-table td.delta-neg { color: var(--err); font-family: var(--mono); }
   .stats-table td.delta-zero { color: var(--muted); font-family: var(--mono); }
-  .stats-table td.num { font-family: var(--mono); font-size: 12px; }
+  .stats-table td.num { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+  .stats-table td.diff-cell-changed { background: var(--diff-changed); }
   .stats-row-banner {
     padding: 8px 14px;
     background: #f4f2ec;
@@ -497,7 +532,7 @@
     <h2>Welcome to the protect playground</h2>
     <p>
       <code>protect</code> is a Python package of statistical-disclosure-control (SDC) verbs for tabular
-      data and analytical outputs. It exposes 17 composable functions — value perturbation,
+      data and analytical outputs. It exposes 18 composable functions — value perturbation,
       generalisation, suppression, and risk reporting — designed for health-research microdata
       and result-release workflows.
     </p>
@@ -696,6 +731,7 @@ __all__ = [
     "jitter",
     "winsorize",
     "bin",
+    "coarsen",
     "year",
     "month",
     "diff",
@@ -1244,6 +1280,246 @@ def _merge_sparse_bins(cat, min_count: int):
         cats = sorted(set(s.dropna().unique()), key=lambda iv: iv.left)
         counts = s.value_counts()
     return pd.Categorical(s, categories=cats, ordered=True)
+
+
+def coarsen(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    to,
+    mode: str = "nearest",
+    unit_id: str | None = None,
+    share: float = 1.0,
+    random_state: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Snap values to a coarser resolution.
+
+    Numeric columns snap to a multiple of `to`; date columns snap to a
+    period boundary. String/object columns raise — use `shorten` instead.
+
+    Parameters
+    ----------
+    data : DataFrame
+    columns : str | list of str
+        Numeric or datetime column(s) to coarsen.
+    to : number | str | pd.Timedelta
+        Resolution to snap to. For numeric columns, a positive number — values
+        are snapped to multiples of this. For date columns, one of:
+          - period name (case-insensitive, plural OK): ``'day'``, ``'hour'``,
+            ``'minute'``, ``'week'``, ``'month'``, ``'quarter'``, ``'year'``
+          - multi-period string: ``'5 years'``, ``'10 days'``, ``'3 months'``
+          - pandas offset alias: ``'W'``, ``'D'``, ``'5Y'``, ``'10min'``
+          - a ``pd.Timedelta``
+    mode : {'nearest', 'floor', 'ceil'}, default 'nearest'
+        Direction of snapping.
+    unit_id, share, random_state
+        Accepted for signature consistency but inert — `coarsen` is
+        deterministic per-value, so unit-aware draws and partial selection
+        do not apply.
+
+    Returns
+    -------
+    DataFrame
+        Copy of `data` with the specified columns coarsened. Numeric inputs
+        return float columns; date inputs return datetime columns.
+
+    Notes
+    -----
+    For coarsening string/categorical codes (ICD chapters, ZIP prefixes), use
+    `shorten`. For binning numeric values into labeled categories, use `bin`.
+    """
+    if mode not in ("nearest", "floor", "ceil"):
+        raise ValueError(
+            f"mode must be 'nearest', 'floor', or 'ceil'; got {mode!r}"
+        )
+    columns = _validate_columns(data, columns)
+    out = data.copy()
+    for col in columns:
+        s = out[col]
+        if pd.api.types.is_datetime64_any_dtype(s):
+            out[col] = _coarsen_date(s, to, mode)
+        elif pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s):
+            out[col] = _coarsen_numeric(s, to, mode)
+        else:
+            raise TypeError(
+                f"Column {col!r} has string dtype; coarsen handles only "
+                f"numeric and datetime. For string/code coarsening, use shorten."
+            )
+    return out
+
+
+# Mapping period name -> (pandas offset alias, is_calendar_period)
+# A "calendar period" is variable-length (month, quarter, year) — these need
+# the period-conversion path rather than `dt.floor`. Week is also handled via
+# the period path because pandas treats it as a non-fixed frequency for floor.
+_PERIOD_NAMES = {
+    "day": ("D", False),
+    "hour": ("h", False),
+    "minute": ("min", False),
+    "week": ("W", True),
+    "month": ("M", True),
+    "quarter": ("Q", True),
+    "year": ("Y", True),
+}
+
+
+def _parse_date_resolution(to):
+    """Normalize `to` into a structured form for date coarsening.
+
+    Returns a tuple `(kind, payload)` where `kind` is one of:
+      - 'timedelta'      : payload is a pd.Timedelta — use dt.floor/round/ceil
+      - 'period'         : payload is (base_name, n) — variable-length calendar
+                           period (year/month/quarter/week), n=multiplier
+      - 'offset'         : payload is a pandas offset alias string usable
+                           directly with dt.floor (e.g. 'D', '5min')
+    """
+    if isinstance(to, pd.Timedelta):
+        return ("timedelta", to)
+    if not isinstance(to, str):
+        raise ValueError(
+            f"For date columns, `to` must be a string or Timedelta; got {to!r}"
+        )
+
+    text = to.strip()
+    # multi-period like "5 years", "10 days", "3 months"
+    parts = text.split()
+    if len(parts) == 2 and parts[0].isdigit():
+        n = int(parts[0])
+        unit = parts[1].lower().rstrip("s")
+        if unit in _PERIOD_NAMES:
+            base, is_period = _PERIOD_NAMES[unit]
+            if is_period:
+                return ("period", (base, n))
+            return ("timedelta", pd.Timedelta(f"{n}{base}"))
+
+    # single name
+    name = text.lower().rstrip("s")
+    if name in _PERIOD_NAMES:
+        base, is_period = _PERIOD_NAMES[name]
+        if is_period:
+            return ("period", (base, 1))
+        return ("offset", base)
+
+    # raw pandas alias — attempt to detect calendar-period suffixes
+    upper = text.upper()
+    # Y, A (year), Q (quarter), M alone (month), W (week) are calendar-period
+    # but 'min' ends with 'N' so it's safe; we need to be careful not to
+    # match 'ME', 'YE' (the modern aliases) either.
+    if upper.endswith(("Y", "A", "Q")) or upper == "M" or upper == "W":
+        # extract leading digits if present (e.g. "5Y", "3M", "2Q")
+        digits = ""
+        i = 0
+        while i < len(text) and text[i].isdigit():
+            digits += text[i]
+            i += 1
+        suffix = text[i:].upper()
+        n = int(digits) if digits else 1
+        if suffix in ("Y", "A", "YE"):
+            return ("period", ("Y", n))
+        if suffix == "Q":
+            return ("period", ("Q", n))
+        if suffix in ("M", "ME"):
+            return ("period", ("M", n))
+        if suffix == "W":
+            return ("period", ("W", n))
+    # fall back to using it as a pandas offset alias directly
+    return ("offset", text)
+
+
+def _coarsen_numeric(s, to, mode):
+    if isinstance(to, bool) or not isinstance(to, (int, float)) or to <= 0:
+        raise ValueError(
+            f"For numeric columns, `to` must be a positive number; got {to!r}"
+        )
+    if mode == "nearest":
+        return (s / to).round() * to
+    if mode == "floor":
+        return np.floor(s / to) * to
+    return np.ceil(s / to) * to
+
+
+def _coarsen_date(s, to, mode):
+    s = pd.to_datetime(s)
+    kind, payload = _parse_date_resolution(to)
+    if kind == "timedelta":
+        freq = payload
+        if mode == "nearest":
+            return s.dt.round(freq)
+        if mode == "floor":
+            return s.dt.floor(freq)
+        return s.dt.ceil(freq)
+    if kind == "offset":
+        if mode == "nearest":
+            return s.dt.round(payload)
+        if mode == "floor":
+            return s.dt.floor(payload)
+        return s.dt.ceil(payload)
+    # kind == "period": variable-length calendar period(s)
+    base, n = payload
+    return _coarsen_date_period(s, base, n, mode)
+
+
+def _coarsen_date_period(s, base, n, mode):
+    """Snap to a calendar period boundary (year/quarter/month/week), possibly
+    a multiple of the base period.
+
+    For multi-year/multi-month/multi-quarter, we use arithmetic on year/month
+    rather than pandas' anchored multi-period (which doesn't align to round
+    multiples like year % 5 == 0).
+    """
+    if base == "Y" and n > 1:
+        years = s.dt.year
+        floor_year = (years // n) * n
+        floor_dt = pd.to_datetime({"year": floor_year, "month": 1, "day": 1})
+        floor_dt.index = s.index
+        ceil_year = floor_year + n
+        ceil_dt = pd.to_datetime({"year": ceil_year, "month": 1, "day": 1})
+        ceil_dt.index = s.index
+    elif base == "M" and n > 1:
+        years = s.dt.year
+        months = s.dt.month  # 1..12
+        # zero-based month index across years
+        total = (years * 12 + (months - 1))
+        floor_total = (total // n) * n
+        floor_year = floor_total // 12
+        floor_month = (floor_total % 12) + 1
+        floor_dt = pd.to_datetime({"year": floor_year, "month": floor_month, "day": 1})
+        floor_dt.index = s.index
+        ceil_total = floor_total + n
+        ceil_year = ceil_total // 12
+        ceil_month = (ceil_total % 12) + 1
+        ceil_dt = pd.to_datetime({"year": ceil_year, "month": ceil_month, "day": 1})
+        ceil_dt.index = s.index
+    elif base == "Q" and n > 1:
+        # treat as multi-month with n*3 months
+        return _coarsen_date_period(s, "M", n * 3, mode)
+    elif base == "W" and n > 1:
+        # treat as multi-day with n*7 days (fixed-frequency)
+        freq = pd.Timedelta(days=7 * n)
+        if mode == "nearest":
+            return s.dt.round(freq)
+        if mode == "floor":
+            return s.dt.floor(freq)
+        return s.dt.ceil(freq)
+    else:
+        # single calendar period — use pandas period conversion
+        freq = base
+        if base == "Y":
+            # newer pandas wants 'Y' or 'YE'; to_period accepts 'Y'
+            freq = "Y"
+        period = s.dt.to_period(freq)
+        floor_dt = period.dt.start_time
+        ceil_dt = (period + 1).dt.start_time
+
+    if mode == "floor":
+        return floor_dt
+    if mode == "ceil":
+        # values already on a boundary should stay
+        return ceil_dt.where(s != floor_dt, floor_dt)
+    # nearest: pick whichever boundary is closer
+    to_floor = (s - floor_dt).abs()
+    to_ceil = (ceil_dt - s).abs()
+    return floor_dt.where(to_floor <= to_ceil, ceil_dt)
 
 
 # ============================================================================
@@ -2273,6 +2549,7 @@ def protect(
         "jitter": jitter,
         "winsorize": winsorize,
         "bin": bin,
+        "coarsen": coarsen,
         "year": year,
         "month": month,
         "diff": diff,
@@ -2606,6 +2883,10 @@ out.head()` },
     code: `# bin — group income into 5 equal-width bins
 out = protect.bin(df, "income", bins=5)
 out[["pid", "income"]].head()` },
+  { name: "coarsen", desc: "Snap values to a coarser resolution (numeric → multiple of N; date → period boundary).",
+    code: `# coarsen — round income to the nearest 10000
+out = protect.coarsen(df, "income", to=10000)
+out[["pid", "income"]].head()` },
   { name: "year", desc: "Truncate a date column to year (or coarser).",
     code: `# year — extract year from date of birth
 out = protect.year(df, "dob")
@@ -2703,22 +2984,79 @@ const compareOutput = document.getElementById("compare-output");
 // ----------------------------------------------------------------------
 // Render verb list
 // ----------------------------------------------------------------------
+// Docs are populated from Python (__protect_docs) once pyodide is ready.
+let PROTECT_DOCS = null;
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function fillVerbDoc(div, name) {
+  const sigEl = div.querySelector(".verb-doc pre.sig");
+  const bodyEl = div.querySelector(".verb-doc .body");
+  if (!sigEl || !bodyEl) return;
+  if (!PROTECT_DOCS) {
+    sigEl.textContent = name + "(…)";
+    bodyEl.textContent = "Docs are still loading — try again in a moment.";
+    return;
+  }
+  const entry = PROTECT_DOCS[name];
+  if (!entry) {
+    sigEl.textContent = name + "(…)";
+    bodyEl.textContent = "(no docs available)";
+    return;
+  }
+  sigEl.textContent = entry.signature || (name + "(…)");
+  bodyEl.textContent = entry.doc || "(no docstring)";
+}
+
 for (const v of VERBS) {
   const div = document.createElement("div");
   div.className = "verb";
+  div.dataset.verb = v.name;
   div.innerHTML = `
     <div class="verb-head">
-      <span class="verb-name">${v.name}</span>
+      <span class="verb-name">${escapeHtml(v.name)}</span>
+      <button class="docs-btn" type="button" title="Show signature + docstring" aria-label="Toggle docs">?</button>
       <button class="try-btn" type="button">Try</button>
     </div>
     <div class="verb-desc">${v.desc}</div>
+    <div class="verb-doc">
+      <pre class="sig"></pre>
+      <pre class="body"></pre>
+    </div>
   `;
   div.querySelector(".try-btn").addEventListener("click", () => {
     editor.value = v.code;
     editor.focus();
     editor.scrollTop = 0;
   });
+  div.querySelector(".docs-btn").addEventListener("click", () => {
+    const expanded = div.classList.toggle("expanded");
+    if (expanded) fillVerbDoc(div, v.name);
+  });
   verbList.appendChild(div);
+}
+
+// Pyodide pulls __protect_docs into PROTECT_DOCS once ready; if any verb-doc
+// panels were already opened before that happened, re-fill them.
+function loadProtectDocs() {
+  if (!pyodide) return;
+  try {
+    const proxy = pyodide.globals.get("__protect_docs");
+    if (!proxy) return;
+    PROTECT_DOCS = proxy.toJs({ dict_converter: Object.fromEntries });
+    proxy.destroy();
+    document.querySelectorAll(".verb.expanded").forEach((d) => {
+      fillVerbDoc(d, d.dataset.verb);
+    });
+  } catch (err) {
+    console.warn("loadProtectDocs failed", err);
+  }
 }
 
 editor.value = STARTER;
@@ -3209,6 +3547,7 @@ async function bootstrap() {
     setStatus("generating sample data…");
     pyodide.runPython(PYTHON_BOOTSTRAP);
     pythonRunner = pyodide.globals.get("__protect_run");
+    loadProtectDocs();
 
     setStatus("ready · " + (pyodide.globals.get("df").shape[0]) + " rows loaded", "ready");
     runBtn.disabled = false;
@@ -3238,7 +3577,27 @@ const PYTHON_BOOTSTRAP = [
 "import numpy as np",
 "import pandas as pd",
 "import protect",
-"import ast, io, traceback, contextlib",
+"import ast, io, traceback, contextlib, inspect",
+"",
+"# Build a docs dict: signature + docstring per verb.",
+"__protect_docs = {}",
+"for __name in getattr(protect, '__all__', []):",
+"    __fn = getattr(protect, __name, None)",
+"    if __fn is None:",
+"        continue",
+"    if not callable(__fn):",
+"        continue",
+"    if isinstance(__fn, type):",
+"        continue",
+"    try:",
+"        __sig = str(inspect.signature(__fn))",
+"    except (TypeError, ValueError):",
+"        __sig = '(...)'",
+"    __doc = inspect.getdoc(__fn) or '(no docstring)'",
+"    __protect_docs[__name] = {",
+"        'signature': __name + __sig,",
+"        'doc': __doc,",
+"    }",
 "",
 "__protect_dataset_name = 'sample'",
 "",
@@ -3512,12 +3871,42 @@ const PYTHON_BOOTSTRAP = [
 "        return '0'",
 "    return '—'",
 "",
+"def _stats_values_equal(b, a):",
+"    if b is None and a is None:",
+"        return True",
+"    if b is None or a is None:",
+"        return False",
+"    try:",
+"        if isinstance(b, float) and isinstance(a, float):",
+"            if pd.isna(b) and pd.isna(a):",
+"                return True",
+"            return b == a",
+"        if isinstance(b, (int, float)) and isinstance(a, (int, float)):",
+"            return float(b) == float(a)",
+"    except Exception:",
+"        pass",
+"    return b == a",
+"",
+"def _stats_cell(b, a):",
+"    # Return (html, changed) for a before/after pair.",
+"    equal = _stats_values_equal(b, a)",
+"    b_str = _fmt_num(b)",
+"    a_str = _fmt_num(a)",
+"    if b is None and a is None:",
+"        return ('<span style=\"color:var(--muted);\">—</span>', False)",
+"    if b is None:",
+"        return ('<span style=\"color:var(--muted);\">—</span> &rarr; ' + a_str, True)",
+"    if a is None:",
+"        return (b_str + ' &rarr; <span style=\"color:var(--muted);\">—</span>', True)",
+"    if equal:",
+"        return ('<span style=\"color:var(--muted);\">' + b_str + '</span>', False)",
+"    return (b_str + ' &rarr; ' + a_str, True)",
+"",
 "def __protect_render_summary():",
 "    if original_df is None or transformed_df is None:",
 "        return {'has_data': False}",
 "    before = original_df",
 "    after = transformed_df",
-"    rows_html = []",
 "    # Top banner row for row-count delta.",
 "    row_delta = after.shape[0] - before.shape[0]",
 "    if row_delta != 0:",
@@ -3535,78 +3924,100 @@ const PYTHON_BOOTSTRAP = [
 "    for c in after.columns:",
 "        if c not in all_cols:",
 "            all_cols.append(c)",
-"    rows_html.append('<table class=\"stats-table\"><thead><tr>'",
-"                     '<th>Column</th><th>Metric</th><th>Before</th><th>After</th><th>Δ</th>'",
-"                     '</tr></thead><tbody>')",
-"    first = True",
+"    # Metric columns: rows, NaN, #unique, mean, std, min, max, top",
+"    metric_keys = ['rows', 'NaN', '#unique', 'mean', 'std', 'min', 'max', 'top']",
+"    rows_html = []",
+"    rows_html.append('<div style=\"overflow-x:auto;\">')",
+"    rows_html.append('<table class=\"stats-table\"><thead><tr>')",
+"    rows_html.append('<th>Column</th>')",
+"    for mk in metric_keys:",
+"        rows_html.append('<th>' + mk + '</th>')",
+"    rows_html.append('</tr></thead><tbody>')",
 "    for c in all_cols:",
 "        b_col = before[c] if c in before.columns else None",
 "        a_col = after[c] if c in after.columns else None",
-"        # Compute metric rows.",
-"        is_num_before = b_col is not None and pd.api.types.is_numeric_dtype(b_col)",
-"        is_num_after = a_col is not None and pd.api.types.is_numeric_dtype(a_col)",
+"        is_num_before = b_col is not None and pd.api.types.is_numeric_dtype(b_col) and not pd.api.types.is_bool_dtype(b_col)",
+"        is_num_after = a_col is not None and pd.api.types.is_numeric_dtype(a_col) and not pd.api.types.is_bool_dtype(a_col)",
 "        numeric = bool(is_num_before or is_num_after)",
-"        metrics = []",
-"        # rows",
+"        # Compute per-metric (before, after) pairs. None means N/A for that metric.",
+"        cells = {}",
 "        b_rows = int(b_col.shape[0]) if b_col is not None else None",
 "        a_rows = int(a_col.shape[0]) if a_col is not None else None",
-"        metrics.append(('rows', b_rows, a_rows))",
-"        # NaN count",
+"        cells['rows'] = (b_rows, a_rows)",
 "        b_nan = int(b_col.isna().sum()) if b_col is not None else None",
 "        a_nan = int(a_col.isna().sum()) if a_col is not None else None",
-"        metrics.append(('NaN', b_nan, a_nan))",
-"        # unique",
+"        cells['NaN'] = (b_nan, a_nan)",
 "        b_uniq = int(b_col.nunique(dropna=True)) if b_col is not None else None",
 "        a_uniq = int(a_col.nunique(dropna=True)) if a_col is not None else None",
-"        metrics.append(('#unique', b_uniq, a_uniq))",
+"        cells['#unique'] = (b_uniq, a_uniq)",
 "        if numeric:",
-"            try:",
-"                metrics.append(('mean', float(b_col.mean()) if b_col is not None and is_num_before else None, float(a_col.mean()) if a_col is not None and is_num_after else None))",
-"            except Exception:",
-"                pass",
-"            try:",
-"                metrics.append(('std', float(b_col.std()) if b_col is not None and is_num_before else None, float(a_col.std()) if a_col is not None and is_num_after else None))",
-"            except Exception:",
-"                pass",
-"            try:",
-"                metrics.append(('min', float(b_col.min()) if b_col is not None and is_num_before else None, float(a_col.min()) if a_col is not None and is_num_after else None))",
-"            except Exception:",
-"                pass",
-"            try:",
-"                metrics.append(('max', float(b_col.max()) if b_col is not None and is_num_before else None, float(a_col.max()) if a_col is not None and is_num_after else None))",
-"            except Exception:",
-"                pass",
+"            for mname, fn in (('mean', 'mean'), ('std', 'std'), ('min', 'min'), ('max', 'max')):",
+"                try:",
+"                    bv = float(getattr(b_col, fn)()) if (b_col is not None and is_num_before) else None",
+"                except Exception:",
+"                    bv = None",
+"                try:",
+"                    av = float(getattr(a_col, fn)()) if (a_col is not None and is_num_after) else None",
+"                except Exception:",
+"                    av = None",
+"                cells[mname] = (bv, av)",
+"            cells['top'] = (None, None)",
 "        else:",
+"            for mname in ('mean', 'std', 'min', 'max'):",
+"                cells[mname] = (None, None)",
 "            try:",
-"                b_top = b_col.mode(dropna=True)",
-"                a_top = a_col.mode(dropna=True) if a_col is not None else None",
-"                b_top_v = str(b_top.iloc[0]) if b_col is not None and len(b_top) else None",
-"                a_top_v = str(a_top.iloc[0]) if a_col is not None and a_top is not None and len(a_top) else None",
-"                metrics.append(('top', b_top_v, a_top_v))",
+"                if b_col is not None:",
+"                    b_mode = b_col.mode(dropna=True)",
+"                    if len(b_mode):",
+"                        bv = b_mode.iloc[0]",
+"                        try:",
+"                            b_count = int((b_col == bv).sum())",
+"                        except Exception:",
+"                            b_count = None",
+"                        b_top = ('(' + str(bv) + ', ' + str(b_count) + ')') if b_count is not None else ('(' + str(bv) + ')')",
+"                    else:",
+"                        b_top = None",
+"                else:",
+"                    b_top = None",
 "            except Exception:",
-"                pass",
-"        col_label = str(c)",
+"                b_top = None",
+"            try:",
+"                if a_col is not None:",
+"                    a_mode = a_col.mode(dropna=True)",
+"                    if len(a_mode):",
+"                        av = a_mode.iloc[0]",
+"                        try:",
+"                            a_count = int((a_col == av).sum())",
+"                        except Exception:",
+"                            a_count = None",
+"                        a_top = ('(' + str(av) + ', ' + str(a_count) + ')') if a_count is not None else ('(' + str(av) + ')')",
+"                    else:",
+"                        a_top = None",
+"                else:",
+"                    a_top = None",
+"            except Exception:",
+"                a_top = None",
+"            cells['top'] = (b_top, a_top)",
+"        # Build row label with new/dropped marker.",
+"        col_label = '<strong>' + str(c) + '</strong>'",
 "        if c not in before.columns:",
 "            col_label = col_label + ' <span style=\"color:var(--ok);font-size:11px;\">(new)</span>'",
 "        elif c not in after.columns:",
-"            col_label = col_label + ' <span style=\"color:var(--muted);font-size:11px;text-decoration:line-through;\">(dropped)</span>'",
-"        first_metric = True",
-"        for (mname, bv, av) in metrics:",
-"            cls = _delta_class(bv, av)",
-"            delta = _delta_str(bv, av)",
-"            tr_cls = 'col-group-start' if first_metric else ''",
-"            label_td = '<td rowspan=\"' + str(len(metrics)) + '\"><strong>' + col_label + '</strong></td>' if first_metric else ''",
-"            rows_html.append(",
-"                '<tr class=\"' + tr_cls + '\">'",
-"                + label_td",
-"                + '<td class=\"metric\">' + mname + '</td>'",
-"                + '<td class=\"num\">' + _fmt_num(bv) + '</td>'",
-"                + '<td class=\"num\">' + _fmt_num(av) + '</td>'",
-"                + '<td class=\"' + cls + '\">' + delta + '</td>'",
-"                + '</tr>'",
-"            )",
-"            first_metric = False",
-"    rows_html.append('</tbody></table>')",
+"            col_label = ('<span style=\"text-decoration:line-through;color:var(--muted);\"><strong>'",
+"                         + str(c) + '</strong></span>'",
+"                         + ' <span style=\"color:var(--muted);font-size:11px;\">(dropped)</span>')",
+"        rows_html.append('<tr>')",
+"        rows_html.append('<td>' + col_label + '</td>')",
+"        for mk in metric_keys:",
+"            bv, av = cells.get(mk, (None, None))",
+"            if bv is None and av is None:",
+"                rows_html.append('<td class=\"num\"><span style=\"color:var(--muted);\">—</span></td>')",
+"            else:",
+"                cell_html, changed = _stats_cell(bv, av)",
+"                cls = 'num diff-cell-changed' if changed else 'num'",
+"                rows_html.append('<td class=\"' + cls + '\">' + cell_html + '</td>')",
+"        rows_html.append('</tr>')",
+"    rows_html.append('</tbody></table></div>')",
 "    html = banner + ''.join(rows_html)",
 "    return {",
 "        'has_data': True,",
