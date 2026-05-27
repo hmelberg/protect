@@ -188,6 +188,58 @@
     font-size: 12px;
     background: var(--panel);
   }
+
+  .data-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .data-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    background: #f8f7f2;
+    flex-wrap: wrap;
+  }
+  .data-bar h3 { margin: 0; font-size: 13px; font-weight: 600; }
+  .data-bar .info { font-family: var(--mono); font-size: 12px; color: var(--muted); flex: 1; min-width: 0; }
+  .upload-btn {
+    display: inline-block;
+    font-family: var(--sans); font-size: 12px; font-weight: 600;
+    padding: 5px 12px;
+    background: var(--accent); color: white;
+    border-radius: 4px; cursor: pointer;
+  }
+  .upload-btn:hover { background: #194e8d; }
+  .upload-btn.disabled { background: #aaa; cursor: not-allowed; }
+  .data-preview {
+    padding: 14px;
+    max-height: 260px;
+    overflow: auto;
+  }
+  .data-preview .empty { color: var(--muted); font-family: var(--mono); font-size: 12.5px; }
+  .data-preview table {
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  .data-preview th, .data-preview td {
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    white-space: nowrap;
+  }
+  .data-preview th {
+    background: var(--code-bg);
+    font-weight: 600;
+    position: sticky; top: 0;
+  }
+  .data-preview tbody tr:hover { background: #fafaf3; }
+  .formats {
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    width: 100%;
+    margin-top: 2px;
+  }
 </style>
 </head>
 <body>
@@ -213,7 +265,7 @@
         health-research microdata and result-release workflows. This playground runs the package entirely in your browser via Pyodide;
         nothing leaves your machine.
       </p>
-      <p>A synthetic panel-shaped dataset of 200 patients is pre-loaded as <code>df</code> (columns: pid, visit, dob, sex, zip, country, icd, income, cost).</p>
+      <p>A synthetic panel-shaped dataset of 200 patients is pre-loaded as <code>df</code> (columns: pid, visit, dob, sex, zip, country, icd, income, cost). Use the <strong>Upload file</strong> button below to load your own data (CSV, TSV, JSON, Parquet, Excel — also gzipped). Files never leave your browser. <em>Feather/Arrow is not supported here</em> — Pyodide has no WebAssembly build of pyarrow; convert to Parquet first.</p>
 
       <h3 style="margin:14px 0 6px;font-size:14px;">Universal arguments</h3>
       <table>
@@ -235,6 +287,18 @@
           <li>Re-run the same code with different <code>random_state</code> values to see noise-driven variability.</li>
         </ul>
       </details>
+    </section>
+
+    <section class="data-card">
+      <div class="data-bar">
+        <h3>dataset</h3>
+        <span class="info" id="dataset-info">— (waiting for Pyodide)</span>
+        <label class="upload-btn disabled" id="upload-label" for="upload-input">Upload file</label>
+        <input id="upload-input" type="file" accept=".csv,.tsv,.txt,.json,.parquet,.pq,.xlsx,.xls,.gz" style="display:none" disabled>
+        <button class="secondary" id="reset-data-btn" disabled>Sample data</button>
+        <span class="formats">Accepted: .csv, .tsv, .txt, .json, .parquet, .xlsx, .xls — also gzipped (.csv.gz, .tsv.gz, .json.gz). Parquet/Excel readers install on demand (fastparquet, openpyxl, xlrd). Feather/Arrow is unavailable in Pyodide — convert to Parquet first.</span>
+      </div>
+      <div id="data-preview" class="data-preview"><span class="empty">No data loaded yet.</span></div>
     </section>
 
     <div class="editor-card">
@@ -715,18 +779,18 @@ def winsorize(
             return lo_arg, hi_arg
         if method == "gaussian":
             m, sd = s.mean(), s.std()
-            return (m - lo_arg * sd if lo_arg else None,
-                    m + hi_arg * sd if hi_arg else None)
+            return (m - lo_arg * sd if lo_arg is not None else None,
+                    m + hi_arg * sd if hi_arg is not None else None)
         if method == "iqr":
             q1, q3 = s.quantile([0.25, 0.75])
             iqr = q3 - q1
-            return (q1 - lo_arg * iqr if lo_arg else None,
-                    q3 + hi_arg * iqr if hi_arg else None)
+            return (q1 - lo_arg * iqr if lo_arg is not None else None,
+                    q3 + hi_arg * iqr if hi_arg is not None else None)
         if method == "mad":
             med = s.median()
             mad = (s - med).abs().median()
-            return (med - lo_arg * mad if lo_arg else None,
-                    med + hi_arg * mad if hi_arg else None)
+            return (med - lo_arg * mad if lo_arg is not None else None,
+                    med + hi_arg * mad if hi_arg is not None else None)
         raise ValueError(f"Unknown winsorize method: {method!r}")
 
     for col in columns:
@@ -1600,7 +1664,7 @@ def _suppress_table(
         if isinstance(out, pd.Series):
             out = out.map(_range_label)
         else:
-            out = out.applymap(_range_label)
+            out = out.map(_range_label)
 
     if secondary:
         out = _secondary_suppression(out)
@@ -2333,31 +2397,109 @@ import numpy as np
 import pandas as pd
 import protect
 
-# Synthetic panel-shaped dataset, mirroring examples.py but smaller (200 patients).
-_rng = np.random.default_rng(42)
-_n_patients = 200
-_visits_per_patient = _rng.integers(1, 6, size=_n_patients)
+# Track the currently-loaded dataset's display name.
+__protect_dataset_name = "sample"
 
-_countries = (["USA"] * 80 + ["UK"] * 40 + ["DE"] * 32 + ["IN"] * 24
-              + ["NO"] * 16 + ["IS", "LI", "AD", "TV"] * 2)
-_rng.shuffle(_countries)
 
-_rows = []
-for _i in range(_n_patients):
-    _pid = f"PT{_i:05d}"
-    _sex = _rng.choice(["M", "F"])
-    _dob = pd.Timestamp("1950-01-01") + pd.Timedelta(days=int(_rng.integers(0, 25000)))
-    _zip = f"{int(_rng.integers(10000, 99999)):05d}"
-    _income = float(_rng.normal(60000, 20000))
-    for _v in range(_visits_per_patient[_i]):
-        _visit = pd.Timestamp("2020-01-01") + pd.Timedelta(days=int(_rng.integers(0, 1500)))
-        _icd = _rng.choice(["I10", "I10.9", "E11.9", "C50.9", "Z00.00", "M54.5", "F32.9"])
-        _cost = float(_rng.normal(500, 200))
-        _rows.append({"pid": _pid, "visit": _visit, "dob": _dob, "sex": _sex,
-                      "zip": _zip, "country": _countries[_i],
-                      "icd": _icd, "income": _income, "cost": _cost})
+def __protect_make_sample_df():
+    """Synthetic panel-shaped dataset, mirroring examples.py but smaller (200 patients)."""
+    rng = np.random.default_rng(42)
+    n_patients = 200
+    visits_per_patient = rng.integers(1, 6, size=n_patients)
+    countries = (["USA"] * 80 + ["UK"] * 40 + ["DE"] * 32 + ["IN"] * 24
+                 + ["NO"] * 16 + ["IS", "LI", "AD", "TV"] * 2)
+    rng.shuffle(countries)
+    rows = []
+    for i in range(n_patients):
+        pid = f"PT{i:05d}"
+        sex = rng.choice(["M", "F"])
+        dob = pd.Timestamp("1950-01-01") + pd.Timedelta(days=int(rng.integers(0, 25000)))
+        zip_ = f"{int(rng.integers(10000, 99999)):05d}"
+        income = float(rng.normal(60000, 20000))
+        for v in range(visits_per_patient[i]):
+            visit = pd.Timestamp("2020-01-01") + pd.Timedelta(days=int(rng.integers(0, 1500)))
+            icd = rng.choice(["I10", "I10.9", "E11.9", "C50.9", "Z00.00", "M54.5", "F32.9"])
+            cost = float(rng.normal(500, 200))
+            rows.append({"pid": pid, "visit": visit, "dob": dob, "sex": sex,
+                         "zip": zip_, "country": countries[i],
+                         "icd": icd, "income": income, "cost": cost})
+    return pd.DataFrame(rows).sort_values(["pid", "visit"]).reset_index(drop=True)
 
-df = pd.DataFrame(_rows).sort_values(["pid", "visit"]).reset_index(drop=True)
+
+df = __protect_make_sample_df()
+
+
+def __protect_load_file(path: str, fmt: str, name: str):
+    """Read a file from the Pyodide FS into a DataFrame and replace df.
+
+    Returns a status dict consumed by JS.
+    """
+    global df, __protect_dataset_name
+    try:
+        compression = "infer"  # pandas reads .csv.gz etc. automatically
+        if fmt == "csv":
+            new_df = pd.read_csv(path, compression=compression)
+        elif fmt == "tsv":
+            new_df = pd.read_csv(path, sep="\t", compression=compression)
+        elif fmt == "txt":
+            # try comma, then tab, then whitespace
+            try:
+                new_df = pd.read_csv(path, compression=compression)
+            except Exception:
+                new_df = pd.read_csv(path, sep=None, engine="python", compression=compression)
+        elif fmt == "json":
+            new_df = pd.read_json(path, compression=compression)
+        elif fmt in ("parquet", "pq"):
+            new_df = pd.read_parquet(path, engine="fastparquet")
+        elif fmt in ("xlsx", "xls"):
+            new_df = pd.read_excel(path)
+        else:
+            return {"error": f"unsupported format: .{fmt}"}
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+    df = new_df
+    __protect_dataset_name = name
+    __protect_user_ns["df"] = new_df
+    return {
+        "rows": int(new_df.shape[0]),
+        "cols": int(new_df.shape[1]),
+        "name": name,
+        "columns": [str(c) for c in new_df.columns],
+        "dtypes": [str(t) for t in new_df.dtypes],
+    }
+
+
+def __protect_reset_data():
+    """Restore the sample synthetic panel as df."""
+    global df, __protect_dataset_name
+    df = __protect_make_sample_df()
+    __protect_dataset_name = "sample"
+    __protect_user_ns["df"] = df
+    return {
+        "rows": int(df.shape[0]),
+        "cols": int(df.shape[1]),
+        "name": "sample",
+    }
+
+
+def __protect_preview(n: int = 10):
+    """Return current df preview (HTML + summary) for display in the data panel.
+
+    Reads from the editor user namespace so that reassignments in the editor
+    (e.g. df = protect.noise(df, ...)) are reflected.
+    """
+    cur = __protect_user_ns.get("df", df)
+    if cur is None or (hasattr(cur, "empty") and cur.empty):
+        return {"html": "<span class='empty'>(empty dataframe)</span>",
+                "summary": "0 rows × 0 cols"}
+    if not isinstance(cur, pd.DataFrame):
+        return {"html": f"<span class='empty'>(df is {type(cur).__name__}, not a DataFrame)</span>",
+                "summary": "—"}
+    head = cur.head(n)
+    html = head.to_html(classes="dataframe", border=0, index=False, max_rows=n)
+    summary = f"{__protect_dataset_name} · {cur.shape[0]:,} rows × {cur.shape[1]} cols"
+    return {"html": html, "summary": summary}
 
 # Runner: execute user code, capture stdout/stderr, and evaluate the trailing
 # expression (Jupyter-like) for repr/HTML output.
@@ -2444,15 +2586,174 @@ __protect_user_ns = {
 
     setStatus("ready · " + (pyodide.globals.get("df").shape[0]) + " rows loaded", "ready");
     runBtn.disabled = false;
+    uploadInput.disabled = false;
+    resetDataBtn.disabled = false;
+    uploadLabel.classList.remove("disabled");
 
     // Replace placeholder output with a friendly hint.
     outputEl.innerHTML = '<pre class="stdout">df is loaded — click Run, or press Ctrl/⌘+Enter.</pre>';
+
+    // Render the initial preview of the sample dataset.
+    refreshPreview();
   } catch (err) {
     console.error(err);
     setStatus("init failed: " + err.message, "err");
     appendStderr("Failed to initialise Pyodide:\n" + (err && err.stack ? err.stack : err));
   }
 }
+
+// ----------------------------------------------------------------------
+// Dataset upload + preview
+// ----------------------------------------------------------------------
+const uploadInput = document.getElementById("upload-input");
+const uploadLabel = document.getElementById("upload-label");
+const resetDataBtn = document.getElementById("reset-data-btn");
+const datasetInfo = document.getElementById("dataset-info");
+const dataPreviewEl = document.getElementById("data-preview");
+
+function refreshPreview() {
+  if (!pyodide) return;
+  try {
+    const previewFn = pyodide.globals.get("__protect_preview");
+    const proxy = previewFn(10);
+    const result = proxy.toJs({ dict_converter: Object.fromEntries });
+    proxy.destroy();
+    previewFn.destroy();
+    dataPreviewEl.innerHTML = result.html;
+    datasetInfo.textContent = result.summary;
+  } catch (err) {
+    dataPreviewEl.innerHTML = '<span class="empty">preview failed: ' + err.message + '</span>';
+  }
+}
+
+// Detect (extension, format) from a filename. Handles .csv.gz etc.
+// `needs` lists Python packages to install via the dual loader below.
+// `unsupported` flags formats that can't run in Pyodide (no WASM build available).
+function detectFormat(name) {
+  const lower = name.toLowerCase();
+  let ext = lower.split(".").pop();
+  if (ext === "gz") {
+    ext = lower.slice(0, -3).split(".").pop();
+  }
+  const supported = {
+    csv: { needs: [] },
+    tsv: { needs: [] },
+    txt: { needs: [] },
+    json: { needs: [] },
+    // Apache Arrow IPC format. Requires pyarrow which has no WASM build for
+    // Pyodide (heavy C++ deps). Tell the user clearly and suggest parquet.
+    feather: { unsupported: "Feather/Arrow needs pyarrow, which is not available in Pyodide (no WebAssembly build). Convert to Parquet or CSV first." },
+    arrow:   { unsupported: "Feather/Arrow needs pyarrow, which is not available in Pyodide (no WebAssembly build). Convert to Parquet or CSV first." },
+    // Parquet works via fastparquet (pure-Python compressed-columnar reader).
+    parquet: { needs: ["fastparquet"] },
+    pq:      { needs: ["fastparquet"] },
+    // Excel uses openpyxl (.xlsx) or xlrd (.xls); both pure Python via micropip.
+    xlsx: { needs: ["openpyxl"] },
+    xls:  { needs: ["xlrd"] },
+  };
+  if (!(ext in supported)) {
+    throw new Error("unsupported file extension: ." + ext);
+  }
+  if (supported[ext].unsupported) {
+    throw new Error(supported[ext].unsupported);
+  }
+  return { ext, needs: supported[ext].needs };
+}
+
+// Track which lazy packages have already been installed.
+const __loadedExtras = new Set();
+
+// Some packages ship as built-in Pyodide wheels; others are only on PyPI and
+// need micropip. Try loadPackage first (faster, no network beyond CDN); fall
+// back to micropip for pure-Python deps.
+let __micropipReady = false;
+async function ensurePackage(pkg) {
+  if (__loadedExtras.has(pkg)) return;
+  try {
+    await pyodide.loadPackage([pkg]);
+  } catch (err) {
+    if (!__micropipReady) {
+      await pyodide.loadPackage(["micropip"]);
+      __micropipReady = true;
+    }
+    await pyodide.runPythonAsync(`import micropip; await micropip.install('${pkg}')`);
+  }
+  __loadedExtras.add(pkg);
+}
+
+async function handleUpload(file) {
+  if (!pyodide) return;
+  let fmt;
+  try {
+    fmt = detectFormat(file.name);
+  } catch (err) {
+    setStatus(err.message, "err");
+    appendStderr(err.message);
+    uploadInput.value = "";
+    return;
+  }
+
+  uploadInput.disabled = true;
+  resetDataBtn.disabled = true;
+  runBtn.disabled = true;
+  uploadLabel.classList.add("disabled");
+
+  try {
+    for (const pkg of fmt.needs) {
+      setStatus(`installing ${pkg}…`);
+      await ensurePackage(pkg);
+    }
+
+    setStatus(`reading ${file.name}…`);
+    const buf = await file.arrayBuffer();
+    // Preserve the .gz suffix on disk so pandas compression='infer' picks it up.
+    const safe = file.name.replace(/[^A-Za-z0-9._-]/g, "_");
+    const path = `/tmp/${safe}`;
+    pyodide.FS.writeFile(path, new Uint8Array(buf));
+
+    const loader = pyodide.globals.get("__protect_load_file");
+    const proxy = loader(path, fmt.ext, file.name);
+    const result = proxy.toJs({ dict_converter: Object.fromEntries });
+    proxy.destroy();
+    loader.destroy();
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    setStatus(`ready · ${result.name}: ${result.rows.toLocaleString()} rows × ${result.cols} cols`, "ready");
+    refreshPreview();
+  } catch (err) {
+    setStatus("upload failed: " + err.message, "err");
+    appendStderr("Upload failed: " + err.message);
+  } finally {
+    uploadInput.disabled = false;
+    resetDataBtn.disabled = false;
+    runBtn.disabled = false;
+    uploadLabel.classList.remove("disabled");
+    uploadInput.value = ""; // allow re-uploading the same file
+  }
+}
+
+uploadInput.addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (file) handleUpload(file);
+});
+
+resetDataBtn.addEventListener("click", () => {
+  if (!pyodide) return;
+  try {
+    const resetFn = pyodide.globals.get("__protect_reset_data");
+    const proxy = resetFn();
+    const result = proxy.toJs({ dict_converter: Object.fromEntries });
+    proxy.destroy();
+    resetFn.destroy();
+    setStatus(`ready · sample: ${result.rows} rows × ${result.cols} cols`, "ready");
+    refreshPreview();
+  } catch (err) {
+    setStatus("reset failed: " + err.message, "err");
+  }
+});
 
 // ----------------------------------------------------------------------
 // Run handler
@@ -2489,6 +2790,9 @@ async function runEditor() {
     if (!result.stdout && !result.stderr && !result.error && !result.value_kind) {
       appendStdout("(no output — last line was a statement, not an expression)");
     }
+
+    // Refresh the data panel preview in case the editor reassigned df.
+    refreshPreview();
   } catch (err) {
     appendStderr("JS error: " + (err && err.stack ? err.stack : err));
   } finally {
