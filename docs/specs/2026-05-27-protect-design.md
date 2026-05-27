@@ -22,7 +22,7 @@ covers data protection.
 ### In scope (v1)
 - Single Python file (`protect.py`) at `~/Documents/GitHub/protect/`
 - Pure dependencies: `numpy`, `pandas` only
-- 17 single-token verbs (listed below)
+- 18 single-token verbs (listed below)
 - Named profiles for HIPAA, microdata.no, GDPR pseudonymization, health-research, k-anonymization
 - `TransformLog` class for audit-trail documentation
 - `RiskReport` dataclass with metrics + recommendations
@@ -130,6 +130,29 @@ Numeric → discrete intervals.
 - `labels` ∈ `{'range', 'midpoint', 'index', list_of_strings}`
 - `min_count=N`: merge sparse bins into neighbors until every bin has ≥ N members (SDC-specific
   feature not in pandas / scipy)
+
+#### `coarsen(data, columns, *, to, mode='nearest', unit_id=None, share=1.0, random_state=None)`
+
+Snap values to a coarser resolution. Numeric columns snap to a multiple of `to`; date columns
+snap to a period boundary. String/object columns raise with a hint to use `shorten`.
+
+- `to` — resolution to snap to:
+  - numeric column: positive number (snap to multiples of this)
+  - date column: period name (`'year'`, `'quarter'`, `'month'`, `'week'`, `'day'`, `'hour'`,
+    `'minute'`), multi-period string (`'5 years'`, `'10 days'`), pandas offset alias (`'D'`,
+    `'5Y'`, `'10min'`), or a `pd.Timedelta`
+- `mode` ∈ `{'nearest', 'floor', 'ceil'}`
+- `unit_id`, `share`, `random_state` accepted but inert — `coarsen` is deterministic per-value
+
+Output preserves the kind of the input column (numeric stays numeric, date stays date). For
+string/code coarsening (ICD chapter, ZIP prefix), use `shorten`; for numeric → labeled bins,
+use `bin`.
+
+Examples:
+- `coarsen(df, 'income', to=10000)` — round to nearest 10k
+- `coarsen(df, 'dob', to='5 years', mode='floor')` — birth-year buckets like 1985, 1990, …
+- `coarsen(df, 'visit', to='month', mode='floor')` — first-of-month date
+- `coarsen(df, 'visit', to=pd.Timedelta(days=10), mode='floor')` — fixed 10-day buckets
 
 ### 4.4 Dates
 
@@ -418,11 +441,14 @@ Integration tests:
 
 - Single file `protect.py`, no submodules (`__init__.py` re-exports)
 - Pure deps: `numpy` + `pandas`
-- 17 single-token verbs (no underscores, no namespaces)
+- 18 single-token verbs (no underscores, no namespaces)
 - `noise` over `add_noise` (single token)
 - `redate` rejected in favor of flat `year` / `month` / `diff`
-- `coarsen` and `aggregate` rejected; functionality split into `bin`,
+- `coarsen` initially rejected; functionality split into `bin`,
   `noise(method='group_mean')`, and `year`/`month`/`diff`
+- `coarsen` added as a numeric+date resolution-snapping verb (May 2026
+  follow-up). Chose `coarsen` over `round` to avoid name collision with
+  `suppress(round=...)` and to use the SDC-domain term.
 - `pseudonymize` over `scramble` (legal-precision term, works on any column)
 - `collapse` for categorical generalization (new verb)
 - `quarter` and `shift` excluded from v1 (express as `month(bin=3)` and 1-line pandas ops)

@@ -283,6 +283,82 @@ class TestBin:
 
 
 # ============================================================================
+# coarsen
+# ============================================================================
+
+
+class TestCoarsen:
+    def test_numeric_nearest(self, small_df):
+        out = p.coarsen(small_df, "income", to=10000)
+        # all values should be multiples of 10000
+        assert (out["income"] % 10000 == 0).all()
+
+    def test_numeric_floor(self, small_df):
+        out = p.coarsen(small_df, "income", to=10000, mode="floor")
+        # all values should be <= original and multiples of 10000
+        assert (out["income"] <= small_df["income"]).all()
+        assert (out["income"] % 10000 == 0).all()
+
+    def test_numeric_ceil(self, small_df):
+        out = p.coarsen(small_df, "income", to=10000, mode="ceil")
+        assert (out["income"] >= small_df["income"]).all()
+        assert (out["income"] % 10000 == 0).all()
+
+    def test_numeric_to_must_be_positive(self, small_df):
+        with pytest.raises(ValueError, match="positive"):
+            p.coarsen(small_df, "income", to=0)
+        with pytest.raises(ValueError, match="positive"):
+            p.coarsen(small_df, "income", to=-100)
+
+    def test_date_week_floor(self, panel_df):
+        out = p.coarsen(panel_df, "visit", to="week", mode="floor")
+        # all results should be a Monday (or whatever day pandas uses for week start)
+        assert pd.api.types.is_datetime64_any_dtype(out["visit"])
+
+    def test_date_month_floor(self, panel_df):
+        out = p.coarsen(panel_df, "visit", to="month", mode="floor")
+        # all results should be on day 1
+        assert (out["visit"].dt.day == 1).all()
+
+    def test_date_year_floor(self, panel_df):
+        out = p.coarsen(panel_df, "dob", to="year", mode="floor")
+        assert (out["dob"].dt.month == 1).all()
+        assert (out["dob"].dt.day == 1).all()
+
+    def test_date_five_years_floor(self, panel_df):
+        out = p.coarsen(panel_df, "dob", to="5 years", mode="floor")
+        # all years should be multiples of 5
+        assert (out["dob"].dt.year % 5 == 0).all()
+
+    def test_date_nearest(self, panel_df):
+        # round to nearest week; results should be a week-boundary
+        out = p.coarsen(panel_df, "visit", to="week", mode="nearest")
+        assert pd.api.types.is_datetime64_any_dtype(out["visit"])
+
+    def test_date_timedelta(self, panel_df):
+        out = p.coarsen(panel_df, "visit", to=pd.Timedelta(days=10), mode="floor")
+        assert pd.api.types.is_datetime64_any_dtype(out["visit"])
+
+    def test_string_column_raises_with_shorten_hint(self, panel_df):
+        with pytest.raises(TypeError, match="shorten"):
+            p.coarsen(panel_df, "country", to=5)
+
+    def test_invalid_mode(self, small_df):
+        with pytest.raises(ValueError, match="mode"):
+            p.coarsen(small_df, "income", to=1000, mode="bogus")
+
+    def test_does_not_mutate_input(self, small_df):
+        original = small_df["income"].copy()
+        p.coarsen(small_df, "income", to=1000)
+        pd.testing.assert_series_equal(small_df["income"], original)
+
+    def test_multi_column(self, panel_df):
+        out = p.coarsen(panel_df, ["income", "cost"], to=100)
+        assert (out["income"] % 100 == 0).all()
+        assert (out["cost"] % 100 == 0).all()
+
+
+# ============================================================================
 # year, month
 # ============================================================================
 

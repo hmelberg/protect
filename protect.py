@@ -22,6 +22,7 @@ __all__ = [
     "jitter",
     "winsorize",
     "bin",
+    "coarsen",
     "year",
     "month",
     "diff",
@@ -570,6 +571,246 @@ def _merge_sparse_bins(cat, min_count: int):
         cats = sorted(set(s.dropna().unique()), key=lambda iv: iv.left)
         counts = s.value_counts()
     return pd.Categorical(s, categories=cats, ordered=True)
+
+
+def coarsen(
+    data: pd.DataFrame,
+    columns: str | Sequence[str],
+    *,
+    to,
+    mode: str = "nearest",
+    unit_id: str | None = None,
+    share: float = 1.0,
+    random_state: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Snap values to a coarser resolution.
+
+    Numeric columns snap to a multiple of `to`; date columns snap to a
+    period boundary. String/object columns raise — use `shorten` instead.
+
+    Parameters
+    ----------
+    data : DataFrame
+    columns : str | list of str
+        Numeric or datetime column(s) to coarsen.
+    to : number | str | pd.Timedelta
+        Resolution to snap to. For numeric columns, a positive number — values
+        are snapped to multiples of this. For date columns, one of:
+          - period name (case-insensitive, plural OK): ``'day'``, ``'hour'``,
+            ``'minute'``, ``'week'``, ``'month'``, ``'quarter'``, ``'year'``
+          - multi-period string: ``'5 years'``, ``'10 days'``, ``'3 months'``
+          - pandas offset alias: ``'W'``, ``'D'``, ``'5Y'``, ``'10min'``
+          - a ``pd.Timedelta``
+    mode : {'nearest', 'floor', 'ceil'}, default 'nearest'
+        Direction of snapping.
+    unit_id, share, random_state
+        Accepted for signature consistency but inert — `coarsen` is
+        deterministic per-value, so unit-aware draws and partial selection
+        do not apply.
+
+    Returns
+    -------
+    DataFrame
+        Copy of `data` with the specified columns coarsened. Numeric inputs
+        return float columns; date inputs return datetime columns.
+
+    Notes
+    -----
+    For coarsening string/categorical codes (ICD chapters, ZIP prefixes), use
+    `shorten`. For binning numeric values into labeled categories, use `bin`.
+    """
+    if mode not in ("nearest", "floor", "ceil"):
+        raise ValueError(
+            f"mode must be 'nearest', 'floor', or 'ceil'; got {mode!r}"
+        )
+    columns = _validate_columns(data, columns)
+    out = data.copy()
+    for col in columns:
+        s = out[col]
+        if pd.api.types.is_datetime64_any_dtype(s):
+            out[col] = _coarsen_date(s, to, mode)
+        elif pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s):
+            out[col] = _coarsen_numeric(s, to, mode)
+        else:
+            raise TypeError(
+                f"Column {col!r} has string dtype; coarsen handles only "
+                f"numeric and datetime. For string/code coarsening, use shorten."
+            )
+    return out
+
+
+# Mapping period name -> (pandas offset alias, is_calendar_period)
+# A "calendar period" is variable-length (month, quarter, year) — these need
+# the period-conversion path rather than `dt.floor`. Week is also handled via
+# the period path because pandas treats it as a non-fixed frequency for floor.
+_PERIOD_NAMES = {
+    "day": ("D", False),
+    "hour": ("h", False),
+    "minute": ("min", False),
+    "week": ("W", True),
+    "month": ("M", True),
+    "quarter": ("Q", True),
+    "year": ("Y", True),
+}
+
+
+def _parse_date_resolution(to):
+    """Normalize `to` into a structured form for date coarsening.
+
+    Returns a tuple `(kind, payload)` where `kind` is one of:
+      - 'timedelta'      : payload is a pd.Timedelta — use dt.floor/round/ceil
+      - 'period'         : payload is (base_name, n) — variable-length calendar
+                           period (year/month/quarter/week), n=multiplier
+      - 'offset'         : payload is a pandas offset alias string usable
+                           directly with dt.floor (e.g. 'D', '5min')
+    """
+    if isinstance(to, pd.Timedelta):
+        return ("timedelta", to)
+    if not isinstance(to, str):
+        raise ValueError(
+            f"For date columns, `to` must be a string or Timedelta; got {to!r}"
+        )
+
+    text = to.strip()
+    # multi-period like "5 years", "10 days", "3 months"
+    parts = text.split()
+    if len(parts) == 2 and parts[0].isdigit():
+        n = int(parts[0])
+        unit = parts[1].lower().rstrip("s")
+        if unit in _PERIOD_NAMES:
+            base, is_period = _PERIOD_NAMES[unit]
+            if is_period:
+                return ("period", (base, n))
+            return ("timedelta", pd.Timedelta(f"{n}{base}"))
+
+    # single name
+    name = text.lower().rstrip("s")
+    if name in _PERIOD_NAMES:
+        base, is_period = _PERIOD_NAMES[name]
+        if is_period:
+            return ("period", (base, 1))
+        return ("offset", base)
+
+    # raw pandas alias — attempt to detect calendar-period suffixes
+    upper = text.upper()
+    # Y, A (year), Q (quarter), M alone (month), W (week) are calendar-period
+    # but 'min' ends with 'N' so it's safe; we need to be careful not to
+    # match 'ME', 'YE' (the modern aliases) either.
+    if upper.endswith(("Y", "A", "Q")) or upper == "M" or upper == "W":
+        # extract leading digits if present (e.g. "5Y", "3M", "2Q")
+        digits = ""
+        i = 0
+        while i < len(text) and text[i].isdigit():
+            digits += text[i]
+            i += 1
+        suffix = text[i:].upper()
+        n = int(digits) if digits else 1
+        if suffix in ("Y", "A", "YE"):
+            return ("period", ("Y", n))
+        if suffix == "Q":
+            return ("period", ("Q", n))
+        if suffix in ("M", "ME"):
+            return ("period", ("M", n))
+        if suffix == "W":
+            return ("period", ("W", n))
+    # fall back to using it as a pandas offset alias directly
+    return ("offset", text)
+
+
+def _coarsen_numeric(s, to, mode):
+    if isinstance(to, bool) or not isinstance(to, (int, float)) or to <= 0:
+        raise ValueError(
+            f"For numeric columns, `to` must be a positive number; got {to!r}"
+        )
+    if mode == "nearest":
+        return (s / to).round() * to
+    if mode == "floor":
+        return np.floor(s / to) * to
+    return np.ceil(s / to) * to
+
+
+def _coarsen_date(s, to, mode):
+    s = pd.to_datetime(s)
+    kind, payload = _parse_date_resolution(to)
+    if kind == "timedelta":
+        freq = payload
+        if mode == "nearest":
+            return s.dt.round(freq)
+        if mode == "floor":
+            return s.dt.floor(freq)
+        return s.dt.ceil(freq)
+    if kind == "offset":
+        if mode == "nearest":
+            return s.dt.round(payload)
+        if mode == "floor":
+            return s.dt.floor(payload)
+        return s.dt.ceil(payload)
+    # kind == "period": variable-length calendar period(s)
+    base, n = payload
+    return _coarsen_date_period(s, base, n, mode)
+
+
+def _coarsen_date_period(s, base, n, mode):
+    """Snap to a calendar period boundary (year/quarter/month/week), possibly
+    a multiple of the base period.
+
+    For multi-year/multi-month/multi-quarter, we use arithmetic on year/month
+    rather than pandas' anchored multi-period (which doesn't align to round
+    multiples like year % 5 == 0).
+    """
+    if base == "Y" and n > 1:
+        years = s.dt.year
+        floor_year = (years // n) * n
+        floor_dt = pd.to_datetime({"year": floor_year, "month": 1, "day": 1})
+        floor_dt.index = s.index
+        ceil_year = floor_year + n
+        ceil_dt = pd.to_datetime({"year": ceil_year, "month": 1, "day": 1})
+        ceil_dt.index = s.index
+    elif base == "M" and n > 1:
+        years = s.dt.year
+        months = s.dt.month  # 1..12
+        # zero-based month index across years
+        total = (years * 12 + (months - 1))
+        floor_total = (total // n) * n
+        floor_year = floor_total // 12
+        floor_month = (floor_total % 12) + 1
+        floor_dt = pd.to_datetime({"year": floor_year, "month": floor_month, "day": 1})
+        floor_dt.index = s.index
+        ceil_total = floor_total + n
+        ceil_year = ceil_total // 12
+        ceil_month = (ceil_total % 12) + 1
+        ceil_dt = pd.to_datetime({"year": ceil_year, "month": ceil_month, "day": 1})
+        ceil_dt.index = s.index
+    elif base == "Q" and n > 1:
+        # treat as multi-month with n*3 months
+        return _coarsen_date_period(s, "M", n * 3, mode)
+    elif base == "W" and n > 1:
+        # treat as multi-day with n*7 days (fixed-frequency)
+        freq = pd.Timedelta(days=7 * n)
+        if mode == "nearest":
+            return s.dt.round(freq)
+        if mode == "floor":
+            return s.dt.floor(freq)
+        return s.dt.ceil(freq)
+    else:
+        # single calendar period — use pandas period conversion
+        freq = base
+        if base == "Y":
+            # newer pandas wants 'Y' or 'YE'; to_period accepts 'Y'
+            freq = "Y"
+        period = s.dt.to_period(freq)
+        floor_dt = period.dt.start_time
+        ceil_dt = (period + 1).dt.start_time
+
+    if mode == "floor":
+        return floor_dt
+    if mode == "ceil":
+        # values already on a boundary should stay
+        return ceil_dt.where(s != floor_dt, floor_dt)
+    # nearest: pick whichever boundary is closer
+    to_floor = (s - floor_dt).abs()
+    to_ceil = (ceil_dt - s).abs()
+    return floor_dt.where(to_floor <= to_ceil, ceil_dt)
 
 
 # ============================================================================
@@ -1599,6 +1840,7 @@ def protect(
         "jitter": jitter,
         "winsorize": winsorize,
         "bin": bin,
+        "coarsen": coarsen,
         "year": year,
         "month": month,
         "diff": diff,

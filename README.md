@@ -1,6 +1,6 @@
 # protect
 
-A Python toolkit for statistical disclosure control on tabular data and analytical results. Pure `numpy` + `pandas`. Single file. Built around 17 single-token verbs.
+A Python toolkit for statistical disclosure control on tabular data and analytical results. Pure `numpy` + `pandas`. Single file. Built around 18 single-token verbs.
 
 **Try it now without installing:** [hmelberg.github.io/protect/playground.html](https://hmelberg.github.io/protect/playground.html) — runs the full package in your browser via Pyodide.
 
@@ -74,7 +74,7 @@ report = p.risk(df_safe, quasi_ids=["sex", "zip", "country"], unit_id="pid")
 print(report.describe())
 ```
 
-## The 17 verbs
+## The 18 verbs
 
 | Verb | What it does |
 |---|---|
@@ -82,6 +82,7 @@ print(report.describe())
 | `jitter` | Small uniform / Gaussian noise (numeric or date columns) |
 | `winsorize` | Cap extremes (percentile, value, Gaussian, IQR, MAD) |
 | `bin` | Numeric → discrete intervals, with sparse-bin merging |
+| `coarsen` | Snap values to a coarser resolution (numeric → multiple of N; date → period boundary) |
 | `year` | Truncate dates to year (with optional multi-year bins) |
 | `month` | Truncate dates to month (with optional multi-month bins) |
 | `diff` | Convert dates to numeric diff from a reference (survival-friendly) |
@@ -120,6 +121,7 @@ Sensible defaults so most calls take only a column name:
 - `pseudonymize(method='random')` — random IDs with key returned
 
 Some verbs intentionally have **no default mode** — you must specify what you want:
+- `coarsen(to=...)` — no default (must specify the resolution)
 - `collapse` — pick `mapping`, `rare_below`, `keep_top`, or `keep_prop`
 - `eliminate` — pick `where`, `rare_below`, `share`, or `columns`
 - `suppress` — pick the kind of output protection you need
@@ -132,6 +134,7 @@ Some verbs intentionally have **no default mode** — you must specify what you 
 - `suppress` dispatches on input type — see the docstring section matching your input.
 - `pseudonymize` produces **pseudonymized** data (still personal under GDPR), not anonymized data.
 - `noise` and `jitter` deliberately overlap; use `jitter` for plot-safe small noise.
+- `coarsen` returns the same dtype (numeric → numeric, date → date). For categorical/string code coarsening (e.g. ICD chapter), use `shorten`. For numeric → categorical labels, use `bin`.
 
 ## Out of scope
 

@@ -72,6 +72,7 @@ The `profile('microdata_no')` verb implements the input-side guards; the `suppre
 | Cell suppression (table) | Output | `suppress(min_n=...)` |
 | Generalization / recoding | Input | `collapse(mapping=...)` |
 | Top/bottom coding | Both | `winsorize(method='value')` |
+| Numeric or date resolution coarsening | Input | `coarsen` |
 | Winsorization | Output (and sometimes input) | `winsorize` |
 | Noise addition (continuous) | Both | `noise`, `jitter` |
 | Microaggregation | Input | `noise(method='group_mean')` |
