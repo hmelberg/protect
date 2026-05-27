@@ -162,7 +162,7 @@ Click any verb in the sidebar to drop a working example into the editor; `Ctrl/â
 
 ## License
 
-No license file yet. Treat as all-rights-reserved until one is added.
+[MIT](LICENSE) Â© 2026 Hans Melberg.
 
 ---
 
