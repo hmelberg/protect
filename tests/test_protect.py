@@ -843,3 +843,27 @@ class TestIntegration:
         data = json.loads(log.to_json())
         assert "entries" in data
         assert len(data["entries"]) == 1
+
+
+# ============================================================================
+# suppress: dominance/p_percent uten contributions skal feile høyt
+# (review 2026-07-24: stille no-op er verst tenkelige utfall for SDC)
+# ============================================================================
+
+def test_suppress_dominance_without_contributions_raises():
+    s = pd.Series([100, 200, 300])
+    with pytest.raises(ValueError, match="contributions"):
+        p.suppress(s, dominance=(1, 0.8))
+
+
+def test_suppress_p_percent_without_contributions_raises():
+    s = pd.Series([100, 200, 300])
+    with pytest.raises(ValueError, match="contributions"):
+        p.suppress(s, p_percent=10)
+
+
+def test_suppress_dominance_with_contributions_still_works():
+    s = pd.Series([100.0, 200.0], index=[0, 1])
+    out = p.suppress(s, dominance=(1, 0.8),
+                     contributions={0: [90, 10], 1: [100, 100]})
+    assert pd.isna(out[0]) and out[1] == 200.0
