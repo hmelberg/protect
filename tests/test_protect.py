@@ -227,6 +227,26 @@ class TestWinsorize:
         out = p.winsorize(small_df, "age", limits=(None, 60), method="value")
         assert out["age"].max() <= 60
 
+    def test_nullable_int_column_upcasts_instead_of_raising(self):
+        # Masked dtypes (Int32/Int64 med pd.NA) nekter clip mot flyttalls-
+        # grenser ("Invalid value '10.5' for dtype 'Int32'") — winsorize må
+        # oppkaste til nullable Float64 (NA bevares) i stedet for å kaste.
+        df = pd.DataFrame({"v": pd.array([10, 12, 14, 16, 18, 1000, None],
+                                         dtype="Int32")})
+        out = p.winsorize(df, "v", limits=(0.05, 0.95), method="percentile")
+        assert out["v"].max() < 1000
+        assert out["v"].isna().sum() == 1
+        assert df["v"].dtype.name == "Int32"          # input urørt
+
+    def test_nullable_int_grouped_winsorize(self):
+        df = pd.DataFrame({"g": ["a"] * 5 + ["b"] * 5,
+                           "v": pd.array([1, 2, 3, 4, 100, 5, 6, 7, 8, 900],
+                                         dtype="Int64")})
+        out = p.winsorize(df, "v", by="g", limits=(0.05, 0.95),
+                          method="percentile")
+        assert out.loc[df["g"] == "a", "v"].max() < 100
+        assert out.loc[df["g"] == "b", "v"].max() < 900
+
     def test_value_method_bottom_codes(self, small_df):
         out = p.winsorize(small_df, "age", limits=(25, None), method="value")
         assert out["age"].min() >= 25
