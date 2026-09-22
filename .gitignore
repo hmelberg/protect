@@ -6,3 +6,6 @@ __pycache__/
 .coverage
 build/
 dist/
+
+# Netlify CLI link (site id, per-machine)
+.netlify/
